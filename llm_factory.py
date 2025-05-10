@@ -1,0 +1,214 @@
+import os
+import json
+import logging
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Union, Tuple
+import time
+
+# Import environment loader
+from env_loader import ENV_VARS, get_client_config
+
+# Configure logging
+logging_level = os.getenv("LOG_LEVEL", "INFO")
+logging.basicConfig(
+    level=getattr(logging, logging_level),
+    format=os.getenv("LOG_FORMAT", '%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# Clean up existing handlers to avoid duplication
+for handler in logger.handlers:
+    if isinstance(handler, logging.StreamHandler):
+        handler.setFormatter(logging.Formatter(
+            '%(levelname)s\t%(message)s'
+        ))
+        break
+
+# Base classes for the Factory Method pattern
+class LLMClient(ABC):
+    """Abstract base class for LLM clients"""
+    
+    @abstractmethod
+    def generate_completion(self, messages, temperature=0, max_tokens=8000, **kwargs):
+        """Generate a completion using the LLM"""
+        pass
+
+class PromptProcessor(ABC):
+    """Abstract base class for prompt processors"""
+    
+    @abstractmethod
+    def process(self, client: LLMClient, prompt_config: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """Process a prompt configuration using the provided LLM client"""
+        pass
+
+# Factory for creating LLM clients
+class LLMClientFactory:
+    """Factory for creating LLM clients"""
+    
+    @staticmethod
+    def create_client(client_type: str = None, config: Dict[str, Any] = None, **kwargs) -> LLMClient:
+        """Create an LLM client of the specified type"""
+        # Use default client type from environment if not specified
+        if client_type is None:
+            client_type = ENV_VARS.get("default_client_type", "azure")
+        
+        # Use environment variables if config not provided
+        if config is None:
+            config = get_client_config(client_type, ENV_VARS)
+        
+        # Add default settings from environment
+        if "temperature" not in kwargs and "default_temperature" in ENV_VARS:
+            kwargs["default_temperature"] = ENV_VARS["default_temperature"]
+        
+        if "max_tokens" not in kwargs and "default_max_tokens" in ENV_VARS:
+            kwargs["default_max_tokens"] = ENV_VARS["default_max_tokens"]
+        
+        # Merge config with kwargs
+        config_with_kwargs = {**config, **kwargs}
+        
+        if client_type.lower() == "azure":
+            from clients.azure_client import AzureLLMClient
+            return AzureLLMClient(**config_with_kwargs)
+        elif client_type.lower() == "groq":
+            from clients.groq_client import GroqLLMClient
+            return GroqLLMClient(**config_with_kwargs)
+        elif client_type.lower() == "openai":
+            from clients.openai_client import OpenAILLMClient
+            return OpenAILLMClient(**config_with_kwargs)
+        else:
+            raise ValueError(f"Unsupported client type: {client_type}")
+
+# Factory for creating prompt processors
+class PromptProcessorFactory:
+    """Factory for creating prompt processors"""
+    
+    @staticmethod
+    def create_processor(pipeline_type: str = None) -> PromptProcessor:
+        """Create a prompt processor of the specified type"""
+        # Use default pipeline type from environment if not specified
+        if pipeline_type is None:
+            pipeline_type = ENV_VARS.get("default_pipeline_type", "standard")
+            
+        if pipeline_type.lower() == "standard":
+            from processors.standard_processor import StandardPromptProcessor
+            return StandardPromptProcessor()
+        elif pipeline_type.lower() in ["cot", "chain_of_thought", "multi_step"]:
+            from processors.cot_processor import ChainOfThoughtProcessor
+            return ChainOfThoughtProcessor()
+        else:
+            raise ValueError(f"Unsupported pipeline type: {pipeline_type}")
+
+# Main function to run a pipeline
+def run_pipeline(
+    prompt_config: Optional[Dict[str, Any]] = None,
+    input_path_or_text: Optional[str] = None,
+    client_type: Optional[str] = None,
+    pipeline_type: Optional[str] = None,
+    output_path: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    env_path: Optional[str] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Run a prompt pipeline using the specified LLM client and processor.
+    
+    Args:
+        prompt_config: The prompt configuration dictionary
+        input_path_or_text: Path to input file or raw text input
+        client_type: Type of LLM client to use (azure, groq, openai)
+        pipeline_type: Type of prompt pipeline to use (standard, cot/multi_step)
+        output_path: Path to save the output (optional)
+        temperature: Temperature parameter for the LLM
+        max_tokens: Maximum tokens parameter for the LLM
+        env_path: Optional path to .env file
+        **kwargs: Additional parameters to pass to the LLM client
+        
+    Returns:
+        The results of the pipeline execution
+    """
+    try:
+        # If env_path is provided, reload environment variables
+        if env_path:
+            from env_loader import load_environment
+            global ENV_VARS
+            ENV_VARS = load_environment(env_path)
+        
+        # Use default values from environment if not specified
+        if client_type is None:
+            client_type = ENV_VARS.get("default_client_type", "azure")
+            
+        if pipeline_type is None:
+            pipeline_type = ENV_VARS.get("default_pipeline_type", "standard")
+            
+        if temperature is None:
+            temperature = ENV_VARS.get("default_temperature", 0)
+            
+        if max_tokens is None:
+            max_tokens = ENV_VARS.get("default_max_tokens", 8000)
+            
+        # Load input content if a path is provided
+        if input_path_or_text and os.path.isfile(input_path_or_text):
+            with open(input_path_or_text, 'r', encoding='utf-8') as f:
+                content = f.read()
+        else:
+            content = input_path_or_text
+            
+        # Load prompt configuration if a path is provided
+        if isinstance(prompt_config, str) and os.path.isfile(prompt_config):
+            with open(prompt_config, 'r', encoding='utf-8') as f:
+                prompt_config = json.load(f)
+        
+        # If prompt_config is still None, assume we're using content directly
+        if prompt_config is None and content:
+            if pipeline_type.lower() == "standard":
+                # For standard prompts, use content as the prompt
+                prompt_config = {
+                    "name": "simple_prompt",
+                    "prompt": content,
+                    "context_data": kwargs.get("context_data")
+                }
+            else:
+                # Try to parse content as a pipeline configuration
+                try:
+                    prompt_config = json.loads(content)
+                except json.JSONDecodeError:
+                    raise ValueError("For multi-step pipelines, input must be a valid JSON pipeline configuration")
+        
+        # Get client configuration from environment
+        client_config = get_client_config(client_type, ENV_VARS)
+        
+        # Create the client and processor
+        logger.info(f"Creating {client_type} client")
+        client = LLMClientFactory.create_client(
+            client_type=client_type,
+            config=client_config,
+            **kwargs
+        )
+        
+        logger.info(f"Creating {pipeline_type} processor")
+        processor = PromptProcessorFactory.create_processor(pipeline_type)
+        
+        # Process the prompt
+        logger.info(f"Processing prompt with {pipeline_type} processor")
+        results = processor.process(
+            client=client,
+            prompt_config=prompt_config,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs
+        )
+        
+        # Save the results if an output path is provided
+        if output_path:
+            logger.info(f"Saving results to {output_path}")
+            os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error running pipeline: {str(e)}")
+        raise
