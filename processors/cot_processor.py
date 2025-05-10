@@ -296,11 +296,11 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing example step: {str(e)}"
             }
     
-    def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens):
+    def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens ):
         """Process a new problem step"""
         from langchain_core.messages import HumanMessage, AIMessage
-        
         try:
+            self._prune_message_history(max_messages=5)
             prompt_text = step.get('prompt', '')
             input_key = step.get('input_key', '')
             schema = step.get('schema')
@@ -312,10 +312,14 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 return {'success': False, 'error': 'Empty prompt in new problem step'}
             
             if input_key and input_key in previous_results:
-                prompt_text = f"Previous result:\n```\n{previous_results[input_key]}\n```\n\n{prompt_text}"
-                    
+                # Extract just the conclusion rather than full previous result
+                prev_result = previous_results[input_key]
+                conclusion = self._extract_conclusion(prev_result)
+                prompt_text = f"Previous result conclusion:\n```\n{conclusion}\n```\n\n{prompt_text}"
+                
             if "previous analysis" not in prompt_text.lower():
-                prompt_text = f"Continue the analysis using the previous steps as context.\n\n{prompt_text}"
+                prompt_text = f"Continue the analysis based on the previous conclusion. Be concise.\n\n{prompt_text}"
+
 
             if context_data:
                 context_str = context_data if isinstance(context_data, str) else json.dumps(context_data, indent=2)
@@ -502,12 +506,16 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 previous_result = previous_results[input_key]
                 logger.info(f"Using previous result from '{input_key}' for step")
                 
+                # Extract just the conclusion rather than full previous result
+                conclusion = self._extract_conclusion(previous_result)
+                
                 # Incorporate previous result into the prompt
                 modified_prompt = (
-                    f"Based on our previous result:\n\n"
-                    f"```\n{previous_result}\n```\n\n"
+                    f"Based on previous conclusion:\n\n"
+                    f"```\n{conclusion}\n```\n\n"
                     f"{prompt_text}"
                 )
+
             
             # Add context data to the prompt if available
             if context_data:
@@ -582,3 +590,43 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
     def _process_summary_step(self, client, step, previous_results, temperature=0, max_tokens=8000):
         """Process a summary step"""
         return self._process_regular_step(client, step, previous_results, "SUMMARY", temperature, max_tokens)
+
+
+    def _extract_conclusion(self, text):
+        """Extract just the conclusion from a longer text"""
+        # For math problems, look for lines with solutions/coordinate pairs
+        if isinstance(text, str):
+            lines = text.split('\n')
+            # Try to find lines with solution patterns
+            for pattern in ["solution", "answer", "values", "x", "y", "=", "conclusion"]:
+                for line in reversed(lines):  # Check from the end
+                    if pattern.lower() in line.lower():
+                        return line.strip()
+            
+            # If no clear conclusion line found, just take the last 2-3 lines
+            return "\n".join(lines[-3:])
+        return str(text)
+
+    def _prune_message_history(self, max_messages=5):
+        """Prune message history to keep only important context"""
+        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+        
+        if len(self.message_history) <= max_messages*2:
+            return  # No need to prune if we're under the limit
+        
+        # Keep system messages and recent conversation pairs
+        system_messages = [msg for msg in self.message_history if isinstance(msg, SystemMessage)]
+        other_messages = [msg for msg in self.message_history if not isinstance(msg, SystemMessage)]
+        
+        # Keep the last max_messages pairs (human + AI)
+        recent_messages = other_messages[-max_messages*2:] if other_messages else []
+        
+        # Reconstruct history
+        self.message_history = system_messages + recent_messages
+        
+        # Also prune raw history
+        if len(self.raw_history) > max_messages*2 + len(system_messages):
+            system_entries = [entry for entry in self.raw_history if entry.get('role') == 'system']
+            other_entries = [entry for entry in self.raw_history if entry.get('role') != 'system']
+            recent_entries = other_entries[-max_messages*2:] if other_entries else []
+            self.raw_history = system_entries + recent_entries

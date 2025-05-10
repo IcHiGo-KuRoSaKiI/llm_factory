@@ -69,6 +69,29 @@ def run_cot_pipeline(pipeline_config, client_type="azure", output_path=None, tem
         max_tokens=max_tokens
     )
 
+
+def run_local_model(text_input, base_url="http://localhost:1234", temperature=0.7, max_tokens=2000):
+    """
+    Run a query against a local model using LM Studio
+    
+    Args:
+        text_input: The text to process
+        base_url: The URL of the local LM Studio server
+        temperature: Temperature setting for sampling
+        max_tokens: Maximum tokens for the response
+        
+    Returns:
+        The model response
+    """
+    return run_standard_extraction(
+        input_text=text_input,
+        client_type="lmstudio",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        base_url=base_url
+    )
+
+
 # Example usage
 def example_usage():
     # """Examples of using the factory pattern"""
@@ -84,40 +107,74 @@ def example_usage():
     
     # Example 2: Chain of Thought pipeline
     print("\n=== Example 2: Chain of Thought Pipeline ===")
+
     cot_config = {
-        "name": "adult_dosing_indications_prompt",
+        "name": "problem_solver",
         "steps": [
             {
                 "type": "initialPrompt",
-                "name": "extract_fda_indications",
-                "prompt": "Extract all FDA-approved indications from the drug information.",
-                "output_key": "fda_indications"
+                "name": "understand_problem",
+                "prompt": "Analyze this math problem step by step: If x + y = 10 and x * y = 21, what are x and y?",
+                "output_key": "problem_analysis"
             },
             {
                 "type": "newQuestion",
-                "name": "add_off_label_uses",
-                "prompt": "Now, identify any commonly used off-label uses for this medication.",
-                "input_key": "fda_indications",
-                "output_key": "indications_with_off_label"
+                "name": "solve_problem",
+                "prompt": "Now solve the problem using algebraic methods.",
+                "input_key": "problem_analysis",
+                "output_key": "solution"
             },
             {
-                "type": "tonality",
-                "name": "format_indications",
-                "prompt": "Format the indications in a standardized list format suitable for healthcare professionals.",
-                "input_key": "indications_with_off_label",
-                "output_key": "formatted_indications"
+                "type": "verification",
+                "name": "verify_solution",
+                "prompt": "Verify that your solution is correct by substituting the values back into the original equations.",
+                "input_key": "solution",
+                "output_key": "verified_solution"
+            },
+            {
+                "type": "finalAnswer",
+                "name": "final_answer",
+                "prompt": "Give me the final answwe, which gives me the values for X and Y}.",
+                "input_key": "verified_solution"
             }
-        ],
-        "context_data": "Amiodarone is a class III antiarrhythmic medication used to treat and prevent several types of cardiac arrhythmias. The FDA has approved it for the treatment of ventricular arrhythmias, particularly ventricular tachycardia and ventricular fibrillation. It is also often used off-label for atrial fibrillation and atrial flutter."
+        ]
     }
+
     
-    cot_result = run_cot_pipeline(
-        pipeline_config=cot_config,
-        client_type="groq",
-        temperature=0
+    # cot_result = run_cot_pipeline(
+    #     pipeline_config=cot_config,
+    #     client_type="groq",
+    #     temperature=0
+    # )
+
+    # print("Chain of Thought Pipeline Result:", json.dumps(cot_result, indent=2))
+    
+
+    print("\n=== Example : Using Local LM Studio Model ===")
+    
+    lmstudio_config = {
+        "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
+        "temperature": 0,
+        "max_tokens": 8000
+    }
+
+    cot_result = run_pipeline(
+        prompt_config=cot_config,
+        client_type="lmstudio",
+        pipeline_type="multi_step",
+        **lmstudio_config
     )
-    print("Chain of Thought Pipeline Result:", json.dumps(cot_result, indent=2))
-    
+
+
+    # cot_result = run_cot_pipeline(
+    #         pipeline_config=cot_config,
+    #         client_type="groq",
+    #         temperature=0
+    #     )
+        
+    print("CoT Result:", json.dumps(cot_result, indent=2))
+
+
     # # Example 3: Using a different client
     # print("\n=== Example 3: Using Groq Client ===")
     # groq_result = run_standard_extraction(

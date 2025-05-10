@@ -5,14 +5,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union, Tuple
 import time
 
-# Import environment loader
-from env_loader import ENV_VARS, get_client_config
-
 # Configure logging
-logging_level = os.getenv("LOG_LEVEL", "INFO")
 logging.basicConfig(
-    level=getattr(logging, logging_level),
-    format=os.getenv("LOG_FORMAT", '%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
@@ -47,35 +43,20 @@ class LLMClientFactory:
     """Factory for creating LLM clients"""
     
     @staticmethod
-    def create_client(client_type: str = None, config: Dict[str, Any] = None, **kwargs) -> LLMClient:
+    def create_client(client_type: str, **kwargs) -> LLMClient:
         """Create an LLM client of the specified type"""
-        # Use default client type from environment if not specified
-        if client_type is None:
-            client_type = ENV_VARS.get("default_client_type", "azure")
-        
-        # Use environment variables if config not provided
-        if config is None:
-            config = get_client_config(client_type, ENV_VARS)
-        
-        # Add default settings from environment
-        if "temperature" not in kwargs and "default_temperature" in ENV_VARS:
-            kwargs["default_temperature"] = ENV_VARS["default_temperature"]
-        
-        if "max_tokens" not in kwargs and "default_max_tokens" in ENV_VARS:
-            kwargs["default_max_tokens"] = ENV_VARS["default_max_tokens"]
-        
-        # Merge config with kwargs
-        config_with_kwargs = {**config, **kwargs}
-        
         if client_type.lower() == "azure":
             from clients.azure_client import AzureLLMClient
-            return AzureLLMClient(**config_with_kwargs)
+            return AzureLLMClient(**kwargs)
         elif client_type.lower() == "groq":
             from clients.groq_client import GroqLLMClient
-            return GroqLLMClient(**config_with_kwargs)
+            return GroqLLMClient(**kwargs)
         elif client_type.lower() == "openai":
             from clients.openai_client import OpenAILLMClient
-            return OpenAILLMClient(**config_with_kwargs)
+            return OpenAILLMClient(**kwargs)
+        elif client_type.lower() in ["lmstudio", "local"]:
+            from clients.lmstudio_client import LMStudioClient
+            return LMStudioClient(**kwargs)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 
@@ -84,12 +65,8 @@ class PromptProcessorFactory:
     """Factory for creating prompt processors"""
     
     @staticmethod
-    def create_processor(pipeline_type: str = None) -> PromptProcessor:
+    def create_processor(pipeline_type: str) -> PromptProcessor:
         """Create a prompt processor of the specified type"""
-        # Use default pipeline type from environment if not specified
-        if pipeline_type is None:
-            pipeline_type = ENV_VARS.get("default_pipeline_type", "standard")
-            
         if pipeline_type.lower() == "standard":
             from processors.standard_processor import StandardPromptProcessor
             return StandardPromptProcessor()
@@ -103,12 +80,11 @@ class PromptProcessorFactory:
 def run_pipeline(
     prompt_config: Optional[Dict[str, Any]] = None,
     input_path_or_text: Optional[str] = None,
-    client_type: Optional[str] = None,
-    pipeline_type: Optional[str] = None,
+    client_type: str = "azure",
+    pipeline_type: str = "standard",
     output_path: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    env_path: Optional[str] = None,
+    temperature: float = 0,
+    max_tokens: int = 8000,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -117,37 +93,17 @@ def run_pipeline(
     Args:
         prompt_config: The prompt configuration dictionary
         input_path_or_text: Path to input file or raw text input
-        client_type: Type of LLM client to use (azure, groq, openai)
+        client_type: Type of LLM client to use (azure, groq, openai, lmstudio)
         pipeline_type: Type of prompt pipeline to use (standard, cot/multi_step)
         output_path: Path to save the output (optional)
         temperature: Temperature parameter for the LLM
         max_tokens: Maximum tokens parameter for the LLM
-        env_path: Optional path to .env file
         **kwargs: Additional parameters to pass to the LLM client
         
     Returns:
         The results of the pipeline execution
     """
     try:
-        # If env_path is provided, reload environment variables
-        if env_path:
-            from env_loader import load_environment
-            global ENV_VARS
-            ENV_VARS = load_environment(env_path)
-        
-        # Use default values from environment if not specified
-        if client_type is None:
-            client_type = ENV_VARS.get("default_client_type", "azure")
-            
-        if pipeline_type is None:
-            pipeline_type = ENV_VARS.get("default_pipeline_type", "standard")
-            
-        if temperature is None:
-            temperature = ENV_VARS.get("default_temperature", 0)
-            
-        if max_tokens is None:
-            max_tokens = ENV_VARS.get("default_max_tokens", 8000)
-            
         # Load input content if a path is provided
         if input_path_or_text and os.path.isfile(input_path_or_text):
             with open(input_path_or_text, 'r', encoding='utf-8') as f:
@@ -176,14 +132,10 @@ def run_pipeline(
                 except json.JSONDecodeError:
                     raise ValueError("For multi-step pipelines, input must be a valid JSON pipeline configuration")
         
-        # Get client configuration from environment
-        client_config = get_client_config(client_type, ENV_VARS)
-        
         # Create the client and processor
         logger.info(f"Creating {client_type} client")
         client = LLMClientFactory.create_client(
             client_type=client_type,
-            config=client_config,
             **kwargs
         )
         
