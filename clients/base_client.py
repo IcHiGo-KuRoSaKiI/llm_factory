@@ -13,6 +13,45 @@ class BaseLLMClient(ABC):
                             **kwargs) -> Union[str, Dict]:
         """Generate a completion using the LLM"""
         pass
+    
+    @abstractmethod
+    def get_openai_response_image(self, 
+                                 image_data: str, 
+                                 prompt: Optional[str] = None,
+                                 model: Optional[str] = None) -> str:
+        """
+        Extract text from an image using AI vision capabilities
+        
+        Args:
+            image_data: Base64-encoded image data or data URI
+            prompt: Optional custom prompt to use for image analysis
+            model: Optional model name to use for image analysis
+            
+        Returns:
+            Extracted text from the image
+        """
+        pass
+    
+    def clean_extracted_text(self, text: str) -> str:
+        """
+        Clean extracted text by removing unnecessary whitespace and formatting
+        
+        Args:
+            text: Raw text to clean
+            
+        Returns:
+            Cleaned text
+        """
+        if not text:
+            return ""
+            
+        # Remove redundant spaces
+        cleaned = " ".join(text.split())
+        
+        # Remove common extraction artifacts
+        cleaned = cleaned.replace("```", "").strip()
+        
+        return cleaned
 
 class BasePromptProcessor(ABC):
     """

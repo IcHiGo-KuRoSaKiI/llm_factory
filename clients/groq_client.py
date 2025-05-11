@@ -1,4 +1,3 @@
-
 # clients/groq_client.py
 import os
 import json
@@ -150,3 +149,34 @@ class GroqLLMClient(BaseLLMClient):
             return {"error": error_msg, "status": "failed"}
         else:
             return f"[Content generation failed: {error_msg}]"
+    
+    def get_openai_response_image(self, 
+                                 image_data: str, 
+                                 prompt: Optional[str] = None,
+                                 model: Optional[str] = None) -> str:
+        """
+        Extract text from an image using OpenAI's Vision capabilities
+        
+        Note: Groq doesn't support vision features natively, so we use OpenAI as a fallback
+        
+        Args:
+            image_data: Base64-encoded image data or data URI
+            prompt: Optional custom prompt to use for image analysis
+            model: Optional model name to use for image analysis
+            
+        Returns:
+            Extracted text from the image
+        """
+        try:
+            # Import OpenAI client for image processing
+            from .openai_client import OpenAILLMClient
+            
+            logger.info("Using OpenAI client for image processing (Groq doesn't support vision)")
+            openai_client = OpenAILLMClient()
+            
+            # Delegate to OpenAI client
+            return openai_client.get_openai_response_image(image_data, prompt, model)
+            
+        except Exception as e:
+            logger.error(f"Error delegating image processing to OpenAI: {str(e)}")
+            return f"[Image processing failed: {str(e)}]"

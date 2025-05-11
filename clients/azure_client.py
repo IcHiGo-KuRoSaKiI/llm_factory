@@ -1,4 +1,3 @@
-
 # clients/azure_client.py
 import os
 import json
@@ -51,6 +50,9 @@ class AzureLLMClient(BaseLLMClient):
             
             # Initialize conversation history storage
             self.conversation_history = {}
+            
+            # Store the vision deployment name if provided
+            self.vision_deployment_name = os.getenv("AZURE_VISION_DEPLOYMENT_NAME")
             
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Azure OpenAI client: {str(e)}")
@@ -189,3 +191,92 @@ class AzureLLMClient(BaseLLMClient):
             return {"error": error_msg, "status": "failed"}
         else:
             return f"[Content generation failed: {error_msg}]"
+    
+    def get_openai_response_image(self, 
+                                 image_data: str, 
+                                 prompt: Optional[str] = None,
+                                 model: Optional[str] = None) -> str:
+        """
+        Extract text from an image using Azure's Vision capabilities
+        
+        Args:
+            image_data: Base64-encoded image data or data URI
+            prompt: Optional custom prompt to use for image analysis
+            model: Optional model name to use for image analysis
+            
+        Returns:
+            Extracted text from the image
+        """
+        try:
+            # Ensure image_data is properly formatted
+            if not image_data.startswith("data:"):
+                # Convert base64 string to data URI
+                image_data = f"data:image/jpeg;base64,{image_data}"
+                
+            # Use default prompt if none provided
+            if not prompt:
+                prompt = """
+                You are an advanced AI system specializing in extracting and structuring data from images while adhering to strict operational criteria. Follow these directives meticulously:
+                1. **Basic Image Assessment:**
+                - If the image contains only one logo, return an empty response.
+                - If the image does not have business relevance or lacks content related to proposals, pitches, case studies, or similar contexts, return an empty response.
+                2. **Data Extraction Guidelines:**
+                - **Text Content:** Extract the textual content exactly as it appears. Preserve line breaks only if they represent distinct content. Ignore formatting, watermarks, and repetitive elements unless they add meaningful context.
+                - **Company Logos:** If identifiable, extract only the name of the company. Avoid extracting logo images or designs.
+                - **Diagrams:** Be very elaborative when describing diagrams. Properly capture their essence by providing a detailed summary of the content, purpose, and context of the diagram. Highlight key elements, relationships, and insights represented in the diagram.
+                - **Tabular Data:** Convert tabular data into a structured and cleanly formatted output, maintaining clarity.
+                3. **Output Requirements:**
+                - Ensure all extracted data is meaningful, structured, and concise.
+                - Avoid redundancy or inclusion of irrelevant details.
+                4. **Ethical and Privacy Considerations:**
+                - Prioritize user data confidentiality.
+                - Ensure the extracted information aligns with ethical guidelines.
+                Your primary objective is to accurately extract, structure, and interpret relevant data while maintaining a high standard of contextual and ethical awareness.
+                """
+            
+            # Use specified model or default vision deployment
+            vision_model = model or self.vision_deployment_name or self.deployment_name
+            
+            # Call the Azure OpenAI API with the image
+            chat_completion = self.client.chat.completions.create(
+                model=vision_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": [{
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_data,
+                                "detail": "high"
+                            }
+                        }]
+                    }
+                ]
+            )
+            
+            # Extract and clean the response
+            raw_text = chat_completion.choices[0].message.content
+            cleaned_text = self.clean_extracted_text(raw_text)
+            return cleaned_text
+            
+        except Exception as e:
+            logger.error(f"Error processing image with Azure OpenAI: {str(e)}")
+            
+            # If no vision-capable deployment available, fall back to OpenAI
+            if "invalid deployment" in str(e).lower() or "does not exist" in str(e).lower():
+                try:
+                    # Try to use OpenAI as fallback
+                    from .openai_client import OpenAILLMClient
+                    
+                    logger.warning("Falling back to OpenAI for image processing")
+                    openai_client = OpenAILLMClient()
+                    return openai_client.get_openai_response_image(image_data, prompt, model)
+                    
+                except Exception as fallback_error:
+                    logger.error(f"Fallback to OpenAI failed: {str(fallback_error)}")
+                    
+            return f"[Image processing failed: {str(e)}]"

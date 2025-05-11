@@ -29,6 +29,24 @@ class LLMClient(ABC):
     def generate_completion(self, messages, temperature=0, max_tokens=8000, **kwargs):
         """Generate a completion using the LLM"""
         pass
+    
+    @abstractmethod
+    def get_openai_response_image(self, 
+                                 image_data: str, 
+                                 prompt: Optional[str] = None,
+                                 model: Optional[str] = None) -> str:
+        """
+        Extract text from an image using AI vision capabilities
+        
+        Args:
+            image_data: Base64-encoded image data or data URI
+            prompt: Optional custom prompt to use for image analysis
+            model: Optional model name to use for image analysis
+            
+        Returns:
+            Extracted text from the image
+        """
+        pass
 
 class PromptProcessor(ABC):
     """Abstract base class for prompt processors"""
@@ -56,7 +74,9 @@ class LLMClientFactory:
             return OpenAILLMClient(**kwargs)
         elif client_type.lower() in ["lmstudio", "local"]:
             from clients.lmstudio_client import LMStudioClient
-            return LMStudioClient(**kwargs)
+            # Check if model supports vision
+            supports_vision = kwargs.pop("supports_vision", False)
+            return LMStudioClient(supports_vision=supports_vision, **kwargs)
         elif client_type.lower() in ["ollama"]:
             from clients.ollama_client import OllamaLLMClient
             return OllamaLLMClient(**kwargs)
