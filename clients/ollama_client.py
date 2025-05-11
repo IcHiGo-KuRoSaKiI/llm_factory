@@ -98,8 +98,10 @@ class OllamaLLMClient(BaseLLMClient):
                 completion_params = {
                     "model": self.model_name,
                     "messages": all_messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens
+                    "options" : {
+                        "temperature": temperature,
+                        "max_tokens": max_tokens
+                    },   
                 }
                 
                 # Handle response format if provided

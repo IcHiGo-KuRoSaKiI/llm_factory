@@ -150,17 +150,18 @@ def example_usage():
     # print("Chain of Thought Pipeline Result:", json.dumps(cot_result, indent=2))
     
 
-    print("\n=== Example : Using Local LM Studio Model ===")
+    print("\n=== Example : Using Ollama Studio Model ===")
     
     lmstudio_config = {
-        "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
-        "temperature": 0,
-        "max_tokens": 8000
+        # "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
+        # "temperature": 0,
+        # "max_tokens": 8000
     }
 
     cot_result = run_pipeline(
         prompt_config=cot_config,
-        client_type="lmstudio",
+        # client_type="lmstudio",
+        client_type="ollama",
         pipeline_type="multi_step",
         **lmstudio_config
     )

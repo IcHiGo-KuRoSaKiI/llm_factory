@@ -57,6 +57,9 @@ class LLMClientFactory:
         elif client_type.lower() in ["lmstudio", "local"]:
             from clients.lmstudio_client import LMStudioClient
             return LMStudioClient(**kwargs)
+        elif client_type.lower() in ["ollama"]:
+            from clients.ollama_client import OllamaLLMClient
+            return OllamaLLMClient(**kwargs)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 
