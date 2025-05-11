@@ -1,9 +1,6 @@
 import os
 import json
 from parsers.factory import ParserFactory
-from llm_factory import LLMClientFactory
-
-
 
 # Mock OpenAI helper for example purposes
 class MockOpenAIHelper:
@@ -91,13 +88,7 @@ if __name__ == "__main__":
     # Example of processing a specific file
     try:
         # Initialize dependencies
-        lmstudio_config = {
-                "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
-                # "temperature": 0,
-                # "max_tokens": 8000
-            }
-        openai_helper = LLMClientFactory.create_client ("lmstudio" , **lmstudio_config)
-        # openai_helper = LLMClient()
+        openai_helper = MockOpenAIHelper()
         logger = MockLogger()
         
         # Sample file path - adjust as needed
