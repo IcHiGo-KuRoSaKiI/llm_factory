@@ -1,11 +1,20 @@
 # Core dependencies
 langchain>=0.1.0
 langchain-openai>=0.0.2
+langchain-core>=0.1.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 
-# Optional client dependencies
-groq>=0.4.0  # For Groq client
+# LLM Provider clients
+groq>=0.4.0
+ollama>=0.1.0
+
+# Document processing
+pymupdf>=1.22.0  # for fitz
+python-docx>=0.8.11
+aspose.slides>=23.5.0
+pdf2image>=1.16.3
+Pillow>=9.5.0
 
 # Utilities
 python-json-logger>=2.0.7
