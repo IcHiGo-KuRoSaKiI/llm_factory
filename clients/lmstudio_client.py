@@ -2,43 +2,55 @@
 import json
 import time
 import logging
-import requests
+import base64
 from typing import Any, Dict, List, Optional, Union
+from openai import OpenAI
 
 from .base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
 class LMStudioClient(BaseLLMClient):
-    """Client for connecting to local LM Studio models"""
+    """Client for connecting to local LM Studio models using the OpenAI SDK"""
     
     def __init__(self,
                  base_url: str = None,
-                 api_path: str = "/v1/chat/completions",
+                 api_path: str = "/v1",
+                 model_name: str = None,
                  default_temperature: float = 0,
                  default_max_tokens: int = 8000,
-                 supports_vision: bool = True):  # Default to True to assume vision support
+                 supports_vision: bool = True,
+                 **kwargs):
         """
-        Initialize LM Studio client
+        Initialize LM Studio client using the OpenAI SDK with a custom base URL
         
         Args:
             base_url: Base URL of the LM Studio server (e.g., "http://localhost:1234")
-            api_path: API endpoint path (default: "/v1/chat/completions")
+            api_path: API endpoint path (default: "/v1")
+            model_name: Name of the model loaded in LM Studio
             default_temperature: Default temperature for generation
             default_max_tokens: Default maximum tokens for generation
             supports_vision: Flag indicating if the loaded model supports vision
+            **kwargs: Additional parameters for the OpenAI client
         """
         try:
             # Store configuration
             self.base_url = base_url or "http://localhost:1234"
             self.base_url = self.base_url.rstrip('/')
             self.api_path = api_path
-            self.api_url = f"{self.base_url}{self.api_path}"
+            self.full_base_url = f"{self.base_url}{self.api_path}"
             
             # Settings
             self.default_temperature = default_temperature
             self.default_max_tokens = default_max_tokens
             self.supports_vision = supports_vision
+            self.model_name = model_name or "local-model"
+            
+            # Initialize the OpenAI client with custom base URL
+            self.client = OpenAI(
+                base_url=self.full_base_url,
+                **kwargs
+            )
             
             # Initialize conversation history storage
             self.conversation_history = {}
@@ -54,28 +66,30 @@ class LMStudioClient(BaseLLMClient):
         """Verify connection to LM Studio server"""
         try:
             # Try a simple request to check if the server is available
-            response = requests.get(f"{self.base_url}/v1/models", timeout=5)
-            if response.status_code != 200:
-                logger.warning(f"LM Studio server connection warning: Status code {response.status_code}")
-                logger.warning("The server is available but returned an unexpected status code. Continuing anyway.")
-            else:
-                logger.info(f"Successfully connected to LM Studio server at {self.base_url}")
-                
-            # Check if there's information about vision capabilities in the models
-            try:
-                model_info = response.json()
-                if isinstance(model_info, dict) and "data" in model_info:
-                    for model in model_info["data"]:
-                        if model.get("capabilities") and "vision" in model.get("capabilities", []):
-                            logger.info(f"Found vision-capable model: {model.get('id')}")
-                            self.supports_vision = True
-                            return
-            except:
-                # If we can't parse model info, just continue with the vision setting from initialization
-                pass
+            models = self.client.models.list()
+            logger.info(f"Successfully connected to LM Studio server at {self.base_url}")
             
-        except requests.exceptions.RequestException:
-            logger.warning(f"Failed to connect to LM Studio server at {self.base_url}")
+            # Check if there's information about the active model
+            try:
+                model_list = self.client.models.list()
+                if hasattr(model_list, 'data') and len(model_list.data) > 0:
+                    # Use the first model as default if not specified
+                    if not self.model_name or self.model_name == "local-model":
+                        self.model_name = model_list.data[0].id
+                        logger.info(f"Using default model: {self.model_name}")
+                    
+                    # Check for vision capabilities
+                    for model in model_list.data:
+                        if hasattr(model, 'capabilities') and 'vision' in getattr(model, 'capabilities', []):
+                            logger.info(f"Found vision-capable model: {model.id}")
+                            self.supports_vision = True
+                            if model.id != self.model_name:
+                                logger.info(f"Consider using {model.id} for vision tasks")
+            except Exception as e:
+                logger.warning(f"Could not retrieve model information: {str(e)}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to connect to LM Studio server at {self.base_url}: {str(e)}")
             logger.warning("Will attempt to connect during actual requests.")
     
     @staticmethod
@@ -102,134 +116,162 @@ class LMStudioClient(BaseLLMClient):
         except Exception as e:
             raise ValueError(f"Error parsing messages: {str(e)}")
     
-# Update the generate_completion method in lmstudio_client.py
-
     def generate_completion(self,
-                        messages: Union[List[Dict[str, str]], str, Dict[str, str]],
-                        temperature: float = None,
-                        max_tokens: int = None,
-                        response_format: Optional[Dict[str, Any]] = None,
-                        max_attempts: int = 3,
-                        subsection_name: str = "Unknown",
-                        conversation_id: str = "default",
-                        **kwargs) -> Union[str, Dict]:
+                           messages: Union[List[Dict[str, str]], str, Dict[str, str]],
+                           temperature: float = None,
+                           max_tokens: int = None,
+                           response_format: Optional[Dict[str, Any]] = None,
+                           max_attempts: int = 3,
+                           subsection_name: str = "Unknown",
+                           conversation_id: str = "default",
+                           **kwargs) -> Union[str, Dict]:
+        """
+        Generate a completion using LM Studio
+        
+        Args:
+            messages: Messages in various formats
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens in response
+            response_format: Response format specification
+            max_attempts: Number of retries on failure
+            subsection_name: Name of the subsection being processed
+            conversation_id: ID to track this conversation thread
+            **kwargs: Additional parameters for the API
+            
+        Returns:
+            Union[str, Dict]: Generated completion
+        """
         attempts = 0
 
+        # Use default values if not provided
         temperature = temperature if temperature is not None else self.default_temperature
         max_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
 
+        # Handle different message formats
         if isinstance(messages, str):
             messages = self.parse_messages_json(messages)
         elif isinstance(messages, dict):
             messages = [messages]
 
+        # Initialize history for this conversation if not exists
         if conversation_id not in self.conversation_history:
             self.conversation_history[conversation_id] = []
-
+            
+        # If we have history and this isn't a fresh start with a system message
         if (self.conversation_history[conversation_id] and 
             not (len(messages) > 0 and messages[0].get("role") == "system")):
+            # Get existing history and append new messages
             all_messages = self.conversation_history[conversation_id] + messages
         else:
             all_messages = messages
-
+        
         while attempts < max_attempts:
             try:
-                payload = {
+                # Prepare parameters for the API call
+                completion_params = {
+                    "model": self.model_name,
                     "messages": all_messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens
                 }
-
-                # Handle response_format
+                
+                # Handle response format
                 if response_format:
-                    fmt_type = response_format.get("type")
-                    if fmt_type == "json_object":
-                        payload["response_format"] = {"type": "json_object"}
-                    elif fmt_type == "json_schema":
-                        schema = response_format.get("json_schema")
+                    if response_format.get("type") == "json_object":
+                        completion_params["response_format"] = {"type": "json_object"}
+                    elif response_format.get("type") == "json_schema":
+                        # Get the schema
+                        schema = response_format.get("json_schema", {})
+                        
+                        # Format the schema according to LM Studio's expected format
+                        # LM Studio expects a specific nested format with 'name' and 'schema' fields
+                        schema_name = schema.get("title", "output_schema") if isinstance(schema, dict) else "output_schema"
+                        
+                        # Format schema according to LM Studio's expected structure
                         lm_studio_schema = {
-                            "name": "output_schema",
-                            "strict": True,
-                            "schema": schema
-                        }
-                        payload["response_format"] = {
                             "type": "json_schema",
-                            "json_schema": lm_studio_schema
+                            "json_schema": {
+                                "name": schema_name,
+                                "schema": schema
+                            }
                         }
-
+                        
+                        # Apply the formatted schema
+                        completion_params["response_format"] = lm_studio_schema
+                        
+                        # Also add a hint in the last message to enforce JSON output
+                        last_message_index = len(all_messages) - 1
+                        if last_message_index >= 0 and "content" in all_messages[last_message_index]:
+                            content = all_messages[last_message_index]["content"]
+                            if not content.endswith("Respond with a JSON object."):
+                                all_messages[last_message_index]["content"] = (
+                                    f"{content}\n\nRespond with a structured JSON object that strictly follows "
+                                    f"the specified schema. Do not include explanations or markdown formatting."
+                                )
+                
+                # Add any additional parameters
                 for key, value in kwargs.items():
-                    if key not in payload and key not in ['subsection_name', 'conversation_id']:
-                        payload[key] = value
-
-                response = requests.post(
-                    self.api_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=500
-                )
-
-                if response.status_code != 200:
-                    logger.warning(f"LM Studio API error (attempt {attempts+1}): Status code {response.status_code}")
-                    logger.warning(f"Response: {response.text}")
-                    raise Exception(f"API returned status code {response.status_code}")
-
-                response_data = response.json()
-
-                if 'choices' in response_data and len(response_data['choices']) > 0:
-                    if 'message' in response_data['choices'][0]:
-                        content = response_data['choices'][0]['message'].get('content', '')
-                    else:
-                        content = response_data['choices'][0].get('text', '')
-                else:
-                    logger.warning("Unexpected response format from LM Studio API")
-                    content = str(response_data)
-
+                    if key not in completion_params and key not in ['subsection_name', 'conversation_id']:
+                        completion_params[key] = value
+                
+                # Make the API call
+                response = self.client.chat.completions.create(**completion_params)
+                
+                # Extract content from the response
+                content = response.choices[0].message.content
+                
+                # Update conversation history
                 self.conversation_history[conversation_id] = all_messages.copy()
                 self.conversation_history[conversation_id].append({
                     "role": "assistant",
                     "content": content
                 })
-
-                # Process JSON responses when schema was provided
-                if response_format and response_format.get("type") == "json_schema":
+                
+                # Process JSON responses
+                if response_format and (response_format.get("type") == "json_schema" or response_format.get("type") == "json_object"):
                     try:
-                        # Handle various JSON formats that might come back
-                        if isinstance(content, str):
-                            # 1. Strip markdown code blocks if present
+                        # First check if the content is already valid JSON
+                        try:
+                            parsed_json = json.loads(content)
+                            return parsed_json
+                        except json.JSONDecodeError:
+                            # If not, try to extract JSON from markdown code blocks
                             import re
                             code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
                             if code_block_match:
-                                content = code_block_match.group(1)
+                                json_content = code_block_match.group(1).strip()
+                                return json.loads(json_content)
                             
-                            # 2. Remove any comments
-                            content = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
-                            content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+                            # If no code block, try to find JSON-like content (anything between curly braces)
+                            json_pattern = re.search(r'(\{[\s\S]*\})', content)
+                            if json_pattern:
+                                json_content = json_pattern.group(1).strip()
+                                return json.loads(json_content)
                             
-                            # 3. Parse the cleaned JSON
-                            return json.loads(content)
-                        elif isinstance(content, dict):
-                            # Already a JSON object
-                            return content
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Response is not valid JSON despite json_schema format: {e}")
+                            # If all extraction attempts fail, return an error
+                            logger.warning(f"Could not extract valid JSON from response: {content[:200]}...")
+                            return {"error": "Invalid JSON response", "content": content}
+                    except Exception as e:
+                        logger.warning(f"Error processing JSON response: {str(e)}")
                         logger.warning(f"Raw content: {content[:200]}...")
-                        return {"error": "Invalid JSON response", "content": content}
-                
+                        return {"error": f"JSON processing error: {str(e)}", "content": content}
+                    
                 return content
-
+                
             except Exception as e:
                 logger.warning(f"Error in generation (attempt {attempts+1}): {str(e)}")
                 attempts += 1
                 time.sleep(1)
-
+        
+        # Return placeholder if all attempts failed
         error_msg = f"Failed to generate completion for '{subsection_name}' after {max_attempts} attempts."
         logger.error(error_msg)
-
-        if response_format and response_format.get("type") == "json_schema":
+        
+        if response_format and (response_format.get("type") == "json_schema" or response_format.get("type") == "json_object"):
             return {"error": error_msg, "status": "failed"}
         else:
             return f"[Content generation failed: {error_msg}]"
-
+    
     def get_openai_response_image(self, 
                                  image_data: str, 
                                  prompt: Optional[str] = None,
@@ -245,6 +287,9 @@ class LMStudioClient(BaseLLMClient):
         Returns:
             Extracted text from the image
         """
+        if not self.supports_vision:
+            logger.warning("LM Studio model may not support vision capabilities")
+            
         # Ensure image_data is properly formatted
         if not image_data.startswith("data:"):
             # Convert base64 string to data URI
@@ -259,66 +304,46 @@ class LMStudioClient(BaseLLMClient):
             Ignore any watermarks or unrelated background elements.
             """
         
-        # Create request with image in the format matching OpenAI's vision API
-        messages = [
-            {
-                "role": "system",
-                "content": prompt
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_data
-                        }
-                    }
-                ]
-            }
-        ]
-        
+        # Create messages with image content
         try:
-            # Prepare request payload
-            payload = {
-                "messages": messages,
-                "temperature": self.default_temperature,
-                "max_tokens": self.default_max_tokens
-            }
+            messages = [
+                {
+                    "role": "system",
+                    "content": prompt
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_data
+                            }
+                        }
+                    ]
+                }
+            ]
             
-            # Log attempt to use LM Studio for vision
-            logger.info(f"Attempting to process image with LM Studio at {self.base_url}")
+            # Use a longer timeout for image processing
+            logger.info("Attempting to process image with LM Studio")
             
-            # Make the API request with a longer timeout for image processing
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=60
+            # Make the API call
+            response = self.client.chat.completions.create(
+                model=model or self.model_name,
+                messages=messages,
+                temperature=self.default_temperature,
+                max_tokens=self.default_max_tokens,
+                timeout=60  # Longer timeout for image processing
             )
             
-            # Check for successful response
-            if response.status_code == 200:
-                response_data = response.json()
-                
-                # Extract the content from the response
-                if 'choices' in response_data and len(response_data['choices']) > 0:
-                    if 'message' in response_data['choices'][0]:
-                        content = response_data['choices'][0]['message'].get('content', '')
-                    else:
-                        content = response_data['choices'][0].get('text', '')
-                        
-                    # Clean extracted text
-                    return self.clean_extracted_text(content)
-                else:
-                    raise Exception(f"Unexpected response format: {response_data}")
-            else:
-                # Log the error response
-                logger.error(f"LM Studio image processing failed with status {response.status_code}: {response.text}")
-                raise Exception(f"LM Studio API returned status code {response.status_code}")
+            # Extract the content
+            content = response.choices[0].message.content
+            
+            # Clean the extracted text
+            return self.clean_extracted_text(content)
                 
         except Exception as e:
             logger.error(f"Failed to process image with LM Studio: {str(e)}")
             
-            # Return a clear error message instead of trying OpenAI fallback
+            # Return a clear error message
             return f"Image processing failed with LM Studio: {str(e)}. Please ensure your LM Studio model supports vision."

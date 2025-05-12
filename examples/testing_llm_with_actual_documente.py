@@ -1,4 +1,4 @@
-# python -m examples.actual_structures
+# python -m examples.testing_llm_with_actual_documente
 
 import json
 import logging
@@ -188,15 +188,16 @@ cot_config = {
             "prompt": prompt1 ,
             "output_key": "problem_analysis",
             "context_data" : json_string,
-        },
-        {
-            "type": "finalAnswer",
-            "name": "final_answer",
-            "prompt": prompt2 , 
-            "input_key": "problem_analysis",  # Reference the previous step's output
-            "schema": graph_node_schema,  # Pass the schema directly
             "output_key": "final_answer_output"
         }
+        # {
+        #     "type": "finalAnswer",
+        #     "name": "final_answer",
+        #     "prompt": prompt2 , 
+        #     "input_key": "problem_analysis",  # Reference the previous step's output
+        #     "schema": graph_node_schema,  # Pass the schema directly
+        #     "output_key": "final_answer_output"
+        # }
     ]
 }
 
@@ -230,4 +231,3 @@ print("\nStructured Output:")
 print(final_json)
 
 
-# python -m examples.testing_llm_with_actual_documente

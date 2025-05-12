@@ -296,8 +296,10 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing example step: {str(e)}"
             }
     
-    def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens ):
-        """Process a new problem step"""
+# This code should replace the existing _process_new_problem_step method in processors/cot_processor.py
+
+    def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens):
+        """Process a new problem step with improved schema handling"""
         from langchain_core.messages import HumanMessage, AIMessage
         try:
             self._prune_message_history(max_messages=5)
@@ -320,10 +322,15 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             if "previous analysis" not in prompt_text.lower():
                 prompt_text = f"Continue the analysis based on the previous conclusion. Be concise.\n\n{prompt_text}"
 
-
             if context_data:
                 context_str = context_data if isinstance(context_data, str) else json.dumps(context_data, indent=2)
                 prompt_text = f"Context Data:\n```\n{context_str}\n```\n\n{prompt_text}"
+            
+            # Enhance prompt for JSON schema if present
+            if schema:
+                schema_str = json.dumps(schema, indent=2)
+                prompt_text += f"\n\nYou MUST format your response as a valid JSON object that conforms to the following schema:\n```json\n{schema_str}\n```\n"
+                prompt_text += "Important: Your response must be a properly formatted JSON object without any additional text, markdown, or explanation."
             
             user_msg = HumanMessage(content=prompt_text)
             self.message_history.append(user_msg)
@@ -341,10 +348,6 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             
             # Generate response using the client
             if schema:
-                # Use the schema to guide the response
-                if isinstance(prompt_text, str) and "json" not in prompt_text.lower():
-                    prompt_text += "\n\nIMPORTANT: Return your response as a clean JSON object without markdown formatting or code blocks."
-
                 response = client.generate_completion(
                     messages=messages,
                     temperature=step_temperature,
@@ -361,15 +364,21 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 structured_output = response
             
             # Add AI response to history
-            ai_msg = AIMessage(content=str(response))
+            ai_msg = AIMessage(content=str(response) if isinstance(response, dict) else response)
             self.message_history.append(ai_msg)
-            self.raw_history.append({'role': 'assistant', 'content': str(response)})
+            
+            # Use the actual content for the raw history, not the stringified version
+            self.raw_history.append({
+                'role': 'assistant', 
+                'content': response if isinstance(response, str) else json.dumps(response, indent=2)
+            })
             
             return {'success': True, 'output': structured_output}
             
         except Exception as e:
             return {'success': False, 'error': f"Error processing new problem step: {str(e)}"}
-    
+
+
     def _process_tonality_step(self, client, step, previous_results, temperature, max_tokens):
         """Process a tonality step"""
         try:
@@ -486,14 +495,17 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing tonality step: {str(e)}"
             }
     
+# This code should replace the existing _process_regular_step method in processors/cot_processor.py
+
     def _process_regular_step(self, client, step, previous_results, step_label="QUESTION", temperature=0, max_tokens=8000):
-        """Process a regular follow-up step or question"""
+        """Process a regular follow-up step or question with schema support"""
         from langchain_core.messages import HumanMessage, AIMessage
         
         try:
             # Get step parameters
             prompt_text = step.get('prompt', '')
             input_key = step.get('input_key', '')
+            schema = step.get('schema')  # Add schema parameter
             step_temperature = step.get('temperature', temperature)
             step_max_tokens = step.get('max_tokens', max_tokens)
             context_data = step.get('context_data', None)
@@ -520,7 +532,6 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     f"{prompt_text}"
                 )
 
-            
             # Add context data to the prompt if available
             if context_data:
                 if isinstance(context_data, str):
@@ -533,6 +544,16 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     f"Use the following context data for this task:\n\n"
                     f"```\n{context_str}\n```\n\n"
                     f"{modified_prompt}"
+                )
+            
+            # Add schema information if provided
+            if schema:
+                schema_str = json.dumps(schema, indent=2)
+                modified_prompt += (
+                    f"\n\nYou MUST format your response as a valid JSON object that conforms "
+                    f"to the following schema:\n```json\n{schema_str}\n```\n"
+                    f"Important: Your response must be a properly formatted JSON object "
+                    f"without any additional text, markdown, or explanation."
                 )
             
             # Create user message
@@ -560,20 +581,30 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     messages.append({"role": "system", "content": msg.content})
             
             # Generate response using the client
-            ai_response = client.generate_completion(
-                messages=messages,
-                temperature=step_temperature,
-                max_tokens=step_max_tokens
-            )
+            if schema:
+                # Use schema for structured output
+                ai_response = client.generate_completion(
+                    messages=messages,
+                    temperature=step_temperature,
+                    max_tokens=step_max_tokens,
+                    response_format={"type": "json_schema", "json_schema": schema}
+                )
+            else:
+                # Standard text generation
+                ai_response = client.generate_completion(
+                    messages=messages,
+                    temperature=step_temperature,
+                    max_tokens=step_max_tokens
+                )
             
             # Add AI response to history
-            ai_msg = AIMessage(content=ai_response)
+            ai_msg = AIMessage(content=str(ai_response) if isinstance(ai_response, dict) else ai_response)
             self.message_history.append(ai_msg)
             
-            # Track raw history for debugging
+            # Track raw history for debugging - use the actual response
             self.raw_history.append({
                 'role': 'assistant', 
-                'content': ai_response
+                'content': ai_response if isinstance(ai_response, str) else json.dumps(ai_response, indent=2)
             })
             
             return {
@@ -586,7 +617,7 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'success': False,
                 'error': f"Error processing {step_label.lower()} step: {str(e)}"
             }
-    
+
     def _process_verification_step(self, client, step, previous_results, temperature=0, max_tokens=8000):
         """Process a verification step"""
         return self._process_regular_step(client, step, previous_results, "VERIFICATION CHECK", temperature, max_tokens)
