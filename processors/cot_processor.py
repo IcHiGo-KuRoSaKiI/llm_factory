@@ -341,6 +341,10 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             
             # Generate response using the client
             if schema:
+                # Use the schema to guide the response
+                if isinstance(prompt_text, str) and "json" not in prompt_text.lower():
+                    prompt_text += "\n\nIMPORTANT: Return your response as a clean JSON object without markdown formatting or code blocks."
+
                 response = client.generate_completion(
                     messages=messages,
                     temperature=step_temperature,

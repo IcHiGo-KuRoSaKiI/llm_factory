@@ -3,6 +3,10 @@ import os
 import json
 import logging
 from typing import Any, Dict, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import the factory pattern implementation
 from llm_factory import run_pipeline
@@ -70,7 +74,7 @@ def run_cot_pipeline(pipeline_config, client_type="azure", output_path=None, tem
     )
 
 
-def run_local_model(text_input, base_url="http://localhost:1234", temperature=0.7, max_tokens=2000):
+def run_local_model(text_input, base_url=None, temperature=0.7, max_tokens=2000):
     """
     Run a query against a local model using LM Studio
     
@@ -83,6 +87,9 @@ def run_local_model(text_input, base_url="http://localhost:1234", temperature=0.
     Returns:
         The model response
     """
+    if base_url is None:
+        base_url = os.environ.get("LM_SUDIO", "http://localhost:1234")
+        
     return run_standard_extraction(
         input_text=text_input,
         client_type="lmstudio",
@@ -171,7 +178,7 @@ def example_usage():
     print("\n=== Example : Using Ollama Studio Model ===")
     
     lmstudio_config = {
-        "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
+        "base_url": os.environ.get("LM_SUDIO"),
         "temperature": 0,
         "max_tokens": 8000
     }

@@ -2,8 +2,12 @@ import os
 import json
 import base64
 from typing import Optional, Dict, List, Any
+from dotenv import load_dotenv
 from parsers.factory import ParserFactory
 from llm_factory import LLMClientFactory
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Mock logger for example purposes
 class MockLogger:
@@ -253,7 +257,7 @@ if __name__ == "__main__":
     # print("\n=== Example 1: Process a Single Image with LM Studio ===")
     lmstudio_config = {
         # "base_url": "http://localhost:1234",
-        "base_url": "/",
+        "base_url": os.environ.get("LM_SUDIO"),
         "supports_vision": True  # Force vision support
     }
     # image_result = process_image(
