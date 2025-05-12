@@ -74,44 +74,67 @@ json_schema = {
 json_string = load_json_as_string('/Users/ichigo/Documents/GitHub/llm_factory/lmstudio_document_result.json')
 
 
-prompt1 = """You are an experienced project manager and solution architect with a strong background in analyzing requirements and developing infrastructure solutions for various projects. 
-Your task is to read and understand a Statement of Work (SOW) document and gather insights regarding the necessary infrastructure for project implementation. Here are the details you need to consider:  
+# prompt1 = """You are an experienced project manager and solution architect with a strong background in analyzing requirements and developing infrastructure solutions for various projects. 
+# Your task is to read and understand a Statement of Work (SOW) document and gather insights regarding the necessary infrastructure for project implementation. Here are the details you need to consider:  
 
-SOW Document: __________  
-Project Goals: __________  
-Existing Infrastructure: __________  
-Required Features: __________  
-Budget Constraints: __________
-
-
-The insights should be structured in a clear and concise format, including an overview of the project, identified requirements, recommended infrastructure components, potential challenges, and a timeline for implementation. 
-
-Please ensure your analysis covers all critical aspects of the project and provides actionable recommendations based on the gathered insights. 
-
-Constraints:  
-
-Avoid technical jargon that may not be understood by all stakeholders.  
-Keep the response focused on practical solutions rather than theoretical concepts.  
-Be cautious of budget limitations and suggest cost-effective solutions.
+# SOW Document: __________  
+# Project Goals: __________  
+# Existing Infrastructure: __________  
+# Required Features: __________  
+# Budget Constraints: __________
 
 
-Example insights you might include:  
+# The insights should be structured in a clear and concise format, including an overview of the project, identified requirements, recommended infrastructure components, potential challenges, and a timeline for implementation. 
 
-"For the project to succeed, we recommend implementing a cloud-based infrastructure due to its scalability and flexibility."  
-"The current infrastructure lacks the capacity to handle the projected workload; hence, we suggest upgrading the server capabilities."
-"""
+# Please ensure your analysis covers all critical aspects of the project and provides actionable recommendations based on the gathered insights. 
 
-prompt2= """You are a knowledgeable data architect with extensive experience in creating structured data representations and graphs in JSON format. Your expertise lies in analyzing complex documents and extracting relevant infrastructure knowledge to represent it effectively.
-Your task is to create a JSON graph based on the infrastructure knowledge extracted from the following document. Please review the document and follow the provided JSON schema to structure your output.
+# Constraints:  
 
-The JSON graph should clearly represent the relationships and entities discussed in the document. Use appropriate keys and values as specified in the JSON schema to ensure a coherent structure.
+# Avoid technical jargon that may not be understood by all stakeholders.  
+# Keep the response focused on practical solutions rather than theoretical concepts.  
+# Be cautious of budget limitations and suggest cost-effective solutions.
+
+
+# Example insights you might include:  
+
+# "For the project to succeed, we recommend implementing a cloud-based infrastructure due to its scalability and flexibility."  
+# "The current infrastructure lacks the capacity to handle the projected workload; hence, we suggest upgrading the server capabilities."
+# """
+
+# prompt2= """You are a knowledgeable data architect with extensive experience in creating structured data representations and graphs in JSON format. Your expertise lies in analyzing complex documents and extracting relevant infrastructure knowledge to represent it effectively.
+# Your task is to create a JSON graph based on the infrastructure knowledge extracted from the following document. Please review the document and follow the provided JSON schema to structure your output.
+
+# The JSON graph should clearly represent the relationships and entities discussed in the document. Use appropriate keys and values as specified in the JSON schema to ensure a coherent structure.
+# """
+
+
+
+# First prompt - analyze document
+prompt1 = """You are an experienced project manager and solution architect. 
+Analyze the provided document and identify key infrastructure components, their relationships, and requirements."""
+
+# Second prompt - make more explicit instructions for JSON output
+prompt2 = """Based on your analysis, create a graph structure representing the infrastructure components.
+
+You MUST follow this exact format for each node:
+{
+  "id": "unique-string-id",
+  "text": "Description of the node",
+  "position": {
+    "x": number,
+    "y": number
+  },
+  "children": [
+    // child nodes with the same structure
+  ]
+}
+
+Start with a root node and add child nodes for each major component. Position nodes logically with x,y coordinates (use numbers between 0-1000).
 """
 
 
 
 graph_node_schema = {
-  "name": "graph_node_schema",
-  "schema": {
     "type": "object",
     "properties": {
       "id": {
@@ -124,30 +147,36 @@ graph_node_schema = {
       },
       "position": {
         "type": "object",
-        "description": "2D coordinates specifying the position of the node in the graph",
         "properties": {
-          "x": {
-            "type": "number",
-            "description": "X-axis coordinate"
-          },
-          "y": {
-            "type": "number",
-            "description": "Y-axis coordinate"
-          }
+          "x": {"type": "number"},
+          "y": {"type": "number"}
         },
         "required": ["x", "y"]
       },
       "children": {
         "type": "array",
-        "description": "List of child nodes nested under this node",
         "items": {
-          "$ref": "#/schema" 
+          "type": "object",
+          "properties": {
+            "id": {"type": "string"},
+            "text": {"type": "string"},
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"}
+              },
+              "required": ["x", "y"]
+            }
+          },
+          "required": ["id", "text", "position"]
         }
       }
     },
     "required": ["id", "text", "position"]
-  }
 }
+
+
 
 
 cot_config = {
@@ -187,7 +216,18 @@ cot_result = run_pipeline(
 )
 
 
+
+# cot_result = run_pipeline(
+#     prompt_config=cot_config,
+#     client_type="openai",
+#     pipeline_type="multi_step",
+#     # **lmstudio_config
+# )
+
 final_json = cot_result["problem_solver"]["final_output"]
 print("\nStructured Output:")
 
 print(final_json)
+
+
+# python -m examples.testing_llm_with_actual_documente
