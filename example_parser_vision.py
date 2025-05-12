@@ -252,7 +252,8 @@ if __name__ == "__main__":
     # Example 1: Process a single image with LM Studio
     # print("\n=== Example 1: Process a Single Image with LM Studio ===")
     lmstudio_config = {
-        "base_url": "http://localhost:1234",
+        # "base_url": "http://localhost:1234",
+        "base_url": "/",
         "supports_vision": True  # Force vision support
     }
     # image_result = process_image(
@@ -272,6 +273,7 @@ if __name__ == "__main__":
         **lmstudio_config
     )
     
+
     # To use with a different client, just change the client_type and config:
     
     # Example with Azure client (if needed)

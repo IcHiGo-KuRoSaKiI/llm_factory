@@ -108,6 +108,23 @@ def example_usage():
     # Example 2: Chain of Thought pipeline
     print("\n=== Example 2: Chain of Thought Pipeline ===")
 
+
+
+    from pydantic import BaseModel
+    from typing import Dict
+
+    class Coordinates(BaseModel):
+        x: int
+        y: int
+
+    class OutputWrapper(BaseModel):
+        output: Coordinates
+
+    # Convert schema to LM Studio-compatible JSON
+    schema_dict = OutputWrapper.model_json_schema()
+    print(schema_dict)
+
+
     cot_config = {
         "name": "problem_solver",
         "steps": [
@@ -135,7 +152,8 @@ def example_usage():
                 "type": "finalAnswer",
                 "name": "final_answer",
                 "prompt": "Give me the final answwe, which gives me the values for X and Y}.",
-                "input_key": "verified_solution"
+                "input_key": "verified_solution",
+                "schema": schema_dict
             }
         ]
     }
@@ -153,15 +171,15 @@ def example_usage():
     print("\n=== Example : Using Ollama Studio Model ===")
     
     lmstudio_config = {
-        # "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
-        # "temperature": 0,
-        # "max_tokens": 8000
+        "base_url": "http://localhost:1234",  # Update this to your LM Studio server URL
+        "temperature": 0,
+        "max_tokens": 8000
     }
 
     cot_result = run_pipeline(
         prompt_config=cot_config,
-        # client_type="lmstudio",
-        client_type="ollama",
+        client_type="lmstudio",
+        # client_type="ollama",
         pipeline_type="multi_step",
         **lmstudio_config
     )
