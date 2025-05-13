@@ -1,0 +1,7 @@
+include README.md
+include requirements.txt
+recursive-include clients *.py
+recursive-include examples *.py
+recursive-include parsers *.py
+recursive-include processors *.py
+recursive-include utils *.py

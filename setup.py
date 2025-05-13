@@ -1,0 +1,27 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="llm_factory",
+    version="0.1.0",
+    description="A flexible framework for LLM interaction",
+    author="LLM Factory Team",
+    packages=find_packages(),
+    install_requires=[
+        "langchain>=0.1.0",
+        "langchain-openai>=0.0.2",
+        "langchain-core>=0.1.0",
+        "openai>=1.0.0",
+        "python-dotenv>=1.0.0",
+        "groq>=0.4.0",
+        "ollama>=0.1.0",
+        "pymupdf>=1.22.0",
+        "python-docx>=0.8.11",
+        "aspose.slides>=23.5.0",
+        "pdf2image>=1.16.3",
+        "Pillow>=9.5.0",
+        "python-json-logger>=2.0.7",
+        "requests>=2.31.0",
+        "tqdm>=4.66.1",
+    ],
+    include_package_data=True,
+)
