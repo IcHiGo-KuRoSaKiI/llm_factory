@@ -10,3 +10,8 @@ if not os.environ.get("LLM_FACTORY_ENV_LOADED"):
 # Automatically load .env when llm_factory is imported
 from .env_loader import load_environment
 load_environment()
+
+# Expose main API at package level
+from .llm_factory import run_pipeline, LLMClientFactory, LLMClient, PromptProcessor, PromptProcessorFactory
+from .parsers.pdf.parser import PDFParser
+from .parsers.factory import ParserFactory

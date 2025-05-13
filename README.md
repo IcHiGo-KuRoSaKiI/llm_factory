@@ -1,3 +1,98 @@
+# LLM Factory: Unified LLM & Document Parsing API
+
+LLM Factory is a modular Python framework for interacting with Large Language Models (LLMs) from multiple providers (Azure OpenAI, OpenAI, Groq, etc.) and for parsing documents (PDF, DOCX, PPTX) using a unified interface.
+
+---
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+---
+
+## Environment Variables
+
+- Place your `.env` file in the root of your project (the project that uses `llm_factory`.
+- The package will automatically load environment variables from the current working directory's `.env` file.
+- See `.env.example` for configuration options.
+
+---
+
+## Exposed API
+
+You can import the following directly from `llm_factory`:
+
+```python
+from llm_factory import (
+    run_pipeline,           # Main function to run LLM prompt pipelines
+    LLMClientFactory,       # Factory for creating LLM clients
+    LLMClient,              # Abstract base class for LLM clients
+    PromptProcessor,        # Abstract base class for prompt processors
+    PromptProcessorFactory, # Factory for creating prompt processors
+    PDFParser,              # PDF document parser
+    ParserFactory           # Factory for document parsers (PDF, DOCX, PPTX, etc.)
+)
+```
+
+---
+
+## Usage Examples
+
+### 1. Running a Prompt Pipeline
+
+```python
+from llm_factory import run_pipeline
+
+result = run_pipeline(
+    prompt_config={
+        "name": "simple_prompt",
+        "prompt": "What is the capital of France?"
+    },
+    client_type="openai",      # or "azure", "groq", etc.
+    pipeline_type="standard",  # or "cot" for chain-of-thought
+    temperature=0.2,
+    max_tokens=1000
+)
+print(result)
+```
+
+### 2. Using the PDF Parser
+
+```python
+from llm_factory import PDFParser
+
+# You need to provide an openai_helper (see your project for implementation)
+pdf_parser = PDFParser(openai_helper)
+parsed_content = pdf_parser.parse("/path/to/file.pdf")
+print(parsed_content)
+```
+
+### 3. Using the Document Parser Factory
+
+```python
+from llm_factory import ParserFactory
+
+parser = ParserFactory.create_parser("/path/to/file.pdf", openai_helper)
+parsed_content = parser.parse("/path/to/file.pdf")
+```
+
+---
+
+## Extending the Factory
+
+- To add a new LLM provider, implement a new client in `clients/` and register it in `LLMClientFactory`.
+- To add a new document parser, implement it in `parsers/` and register it in `ParserFactory`.
+
+---
+
+## License
+
+MIT License
+
+---
+
 # LLM Factory: A Flexible Framework for LLM Interaction
 
 ## 🌟 Overview
@@ -37,17 +132,20 @@ LLM Factory is a modular, extensible framework for interacting with Large Langua
 ### Setup
 
 1. Clone the repository:
+
    ```bash
    git clone (haev yet to decide)
    cd llm-factory
    ```
 
 2. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. Create a `.env` file in the project root with your API keys and configurations:
+
    ```bash
    cp .env.example .env
    # Edit .env with your API keys and configuration
@@ -272,6 +370,7 @@ result = run_pipeline(
 Chain of Thought (CoT) processing allows you to create multi-step reasoning pipelines, where each step builds on the previous ones. This is particularly useful for complex reasoning tasks.
 
 Available step types:
+
 - `initialPrompt`: Sets up the reasoning pattern with examples
 - `newQuestion`: Continues the reasoning with a new question
 - `tonality`: Applies tonality formatting to previous outputs
@@ -280,6 +379,7 @@ Available step types:
 - `summary`: Summarizes the reasoning process
 
 Example pipeline:
+
 ```python
 cot_config = {
     "name": "medical_diagnosis_reasoning",
@@ -321,6 +421,7 @@ cot_config = {
 You can enforce structured output using JSON schemas. This is particularly useful for extracting specific information in a consistent format.
 
 Example JSON schema:
+
 ```python
 medication_schema = {
     "type": "object",
@@ -341,6 +442,7 @@ medication_schema = {
 ### Adding New LLM Providers
 
 1. Create a new client class in the `clients` directory:
+
 ```python
 # clients/anthropic_client.py
 from .base_client import BaseLLMClient
@@ -358,6 +460,7 @@ class AnthropicLLMClient(BaseLLMClient):
 ```
 
 2. Update the factory to include the new client:
+
 ```python
 # llm_factory_updated.py
 elif client_type.lower() == "anthropic":
@@ -366,6 +469,7 @@ elif client_type.lower() == "anthropic":
 ```
 
 3. Add environment variables to `.env`:
+
 ```
 # Anthropic Configuration
 ANTHROPIC_API_KEY="your-anthropic-api-key"
@@ -375,6 +479,7 @@ ANTHROPIC_MODEL_NAME="claude-3-haiku"
 ### Creating Custom Processors
 
 1. Create a new processor class in the `processors` directory:
+
 ```python
 # processors/streaming_processor.py
 from .base_processor import BasePromptProcessor
@@ -386,6 +491,7 @@ class StreamingProcessor(BasePromptProcessor):
 ```
 
 2. Update the factory to include the new processor:
+
 ```python
 # llm_factory_updated.py
 elif pipeline_type.lower() == "streaming":
@@ -404,7 +510,7 @@ elif pipeline_type.lower() == "streaming":
    - Solution: Check your `.env` file to ensure all required Azure variables are set
 
 3. **"Failed to generate completion for 'X' after 3 attempts."**
-   - Solution: 
+   - Solution:
      - Check your API key and endpoint
      - Ensure your deployment exists and is running
      - Verify you haven't exceeded your rate limits
@@ -415,6 +521,7 @@ elif pipeline_type.lower() == "streaming":
 ### Debug Mode
 
 Enable debug logging by setting the environment variable:
+
 ```
 LOG_LEVEL="DEBUG"
 ```
@@ -442,36 +549,43 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🔎 What Can You Do With LLM Factory?
 
 ### 1. Build Conversational Applications
+
 - Create chatbots with conversational memory
 - Implement virtual assistants with multi-step reasoning
 - Build customer support automation
 
 ### 2. Create Content Generation Tools
+
 - Develop blog post generators with specific tonality
 - Build product description writers with consistent formats
 - Create document summarization tools
 
 ### 3. Implement Information Extraction Systems
+
 - Extract structured data from unstructured text
 - Build document parsing tools
 - Create knowledge base population systems
 
 ### 4. Develop Decision Support Systems
+
 - Implement diagnostic reasoning tools
 - Create financial analysis assistants
 - Build legal document analysis systems
 
 ### 5. A/B Test Different LLM Providers
+
 - Compare quality across models with the same prompts
 - Benchmark performance between providers
 - Find the best cost-to-quality ratio for your use case
 
 ### 6. Create Educational Tools
+
 - Build explanation systems with step-by-step reasoning
 - Develop code generation and explanation tools
 - Create interactive tutoring systems
 
 ### 7. Implement Complex Workflows
+
 - Chain multiple extractions and generations together
 - Build multi-agent systems
 - Create systems that combine LLM outputs with other tools
