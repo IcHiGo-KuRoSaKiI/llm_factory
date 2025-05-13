@@ -1,21 +1,16 @@
 include README.md
 include requirements.txt
+# include LICENSE.txt  # If you add a license file
 
-# Include all files from the examples directory
 recursive-include examples *
 
-# Graft the actual package directory to include all its contents (Python and non-Python files)
-# This ensures that data files, templates, etc., within your llm_factory package are included.
-graft llm_factory/llm_factory
+# Ensure all files within the llm_factory package are included.
+# This relies on `include_package_data=True` in setup.py and setuptools
+# correctly finding files (especially those tracked by version control).
+# If you have specific non-Python data files not picked up,
+# you can add more specific `recursive-include llm_factory/your_data_dir *` lines.
 
-# Prune the old top-level directories if they were accidentally included or for cleanup
-# (though they shouldn't be part of the package data if find_packages is working correctly)
-prune clients
-prune parsers
-prune processors
-prune utils
-
-# Exclude common unwanted files from the sdist
+# Exclude common unwanted files
 global-exclude *.py[co]
 global-exclude __pycache__
 global-exclude .DS_Store
