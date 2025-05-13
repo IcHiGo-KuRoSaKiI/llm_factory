@@ -5,7 +5,7 @@ setup(
     version="0.1.0",
     description="A flexible framework for LLM interaction",
     author="LLM Factory Team",
-    packages=find_packages(),
+    packages=find_packages(include=['llm_factory', 'llm_factory.*']),
     install_requires=[
         "langchain>=0.1.0",
         "langchain-openai>=0.0.2",
