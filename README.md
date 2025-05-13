@@ -32,15 +32,36 @@ You can import the following directly from `llm_factory`:
 
 ```python
 from llm_factory import (
+    # Core
     run_pipeline,           # Main function to run LLM prompt pipelines
     LLMClientFactory,       # Factory for creating LLM clients
-    LLMClient,              # Abstract base class for LLM clients
-    PromptProcessor,        # Abstract base class for prompt processors
     PromptProcessorFactory, # Factory for creating prompt processors
     ParserFactory,          # Factory for document parsers (PDF, DOCX, PPTX, etc.)
-    PDFParser,              # PDF document parser
     ENV_VARS,               # Dictionary of loaded environment variables
-    get_client_config       # Function to get specific client config
+    get_client_config,      # Function to get specific client config
+
+    # Base Classes (for type hinting and extension)
+    LLMClient,              # Abstract base class for LLM clients (from core)
+    BaseLLMClient,          # Base class for specific LLM client implementations
+    PromptProcessor,        # Abstract base class for prompt processors (from core)
+    BasePromptProcessor,    # Base class for specific prompt processor implementations
+    BaseParser,             # Base class for specific document parser implementations
+
+    # Concrete LLM Clients
+    AzureLLMClient,
+    GroqLLMClient,
+    LMStudioClient,
+    OllamaLLMClient,
+    OpenAILLMClient,
+
+    # Concrete Parsers
+    PDFParser,
+    DocxParser,
+    PPTProcessor,           # Parser for PPTX files
+
+    # Concrete Prompt Processors
+    StandardPromptProcessor,
+    ChainOfThoughtProcessor
 )
 ```
 
@@ -67,31 +88,155 @@ result = run_pipeline(
     max_tokens=1000
 )
 print(result)
+# Expected: Paris (or similar)
 ```
 
-### 2. Using the PDF Parser
+### 2. Using a Specific LLM Client (e.g., OpenAI)
+
+```python
+from llm_factory import OpenAILLMClient, LLMClientFactory
+
+# Option 1: Direct instantiation
+# Ensure OPENAI_API_KEY is set in your environment or .env file
+try:
+    client = OpenAILLMClient()
+    response = client.generate_completion(
+        messages=[{"role": "user", "content": "Tell me a joke."}]
+    )
+    print(f"Direct Client Response: {response}")
+except RuntimeError as e:
+    print(f"Error instantiating client: {e}")
+
+
+# Option 2: Using the factory
+# Ensure relevant environment variables for 'openai' are set
+try:
+    factory_client = LLMClientFactory.create_client(client_type="openai")
+    response_factory = factory_client.generate_completion(
+        messages=[{"role": "user", "content": "What is 1 + 1?"}]
+    )
+    print(f"Factory Client Response: {response_factory}")
+except ValueError as e:
+    print(f"Error creating client via factory: {e}")
+except RuntimeError as e:
+    print(f"Error during client operation: {e}")
+```
+
+### 3. Using the Document Parser Factory (e.g., PDF)
 
 ```python
 from llm_factory import ParserFactory, PDFParser
+import os # Added for os.path.exists
 
-# For parsers that require an LLM for vision/analysis, you might need to pass a client instance.
-parser = ParserFactory.create_parser(file_path_or_url="/path/to/your/file.pdf")
-parsed_content = parser.parse("/path/to/your/file.pdf") # or just parser.parse() if path given at init
-print(parsed_content)
+# Example with PDFParser directly
+# pdf_parser = PDFParser(file_path_or_url="/path/to/your/document.pdf")
+# content = pdf_parser.parse()
+# print(f"PDF Content (Direct): {content[:500]}...") # Print first 500 chars
+
+# Example with ParserFactory
+try:
+    # Replace with an actual path to a PDF or DOCX file for testing
+    # Ensure the file exists at the specified path
+    # For PDF: requires 'pip install pymupdf'
+    # For DOCX: requires 'pip install python-docx'
+    # For PPTX: requires 'pip install python-pptx'
+    
+    # file_to_parse = "/path/to/your/file.pdf" 
+    # file_to_parse = "/path/to/your/file.docx"
+    file_to_parse = "example.pdf" # Create a dummy example.pdf or use a real one
+    
+    # Create a dummy PDF for the example to run without external files
+    try:
+        from llm_factory.parsers.pdf.parser import PDFParser # To check if available
+        # This is a simplified way to create a dummy PDF; real PDFs are more complex.
+        # For a real test, use an actual PDF file.
+        # If PyMuPDF is not installed, this part will be skipped.
+        import fitz # PyMuPDF
+        doc = fitz.open() # New empty PDF
+        page = doc.new_page()
+        page.insert_text((72, 72), "This is a test PDF document for llm_factory.")
+        doc.save(file_to_parse)
+        doc.close()
+        print(f"Created dummy '{file_to_parse}' for example.")
+    except ImportError:
+        print(f"PyMuPDF (fitz) not installed, skipping dummy PDF creation. Parser example might fail if '{file_to_parse}' does not exist.")
+    except Exception as e:
+        print(f"Could not create dummy PDF: {e}")
+
+
+    if os.path.exists(file_to_parse):
+        parser = ParserFactory.create_parser(file_path_or_url=file_to_parse)
+        if parser:
+            parsed_content = parser.parse() 
+            print(f"Parsed Content (Factory for '{file_to_parse}'): {parsed_content[:500]}...") # Print first 500 chars
+        else:
+            print(f"Could not create a parser for '{file_to_parse}'. Check file type and dependencies.")
+    else:
+        print(f"File '{file_to_parse}' not found. Skipping parser example.")
+
+except ImportError as e:
+    print(f"A required parsing library is not installed: {e}. Skipping parser example.")
+except Exception as e:
+    print(f"An error occurred in the parser example: {e}")
+
 ```
 
-### 3. Using the Document Parser Factory
+### 4. Using a Specific Prompt Processor (e.g., StandardProcessor)
 
 ```python
-from llm_factory import ParserFactory
+from llm_factory import StandardPromptProcessor, OpenAILLMClient, LLMClientFactory
 
-# The factory determines the parser type based on the file extension.
-parser = ParserFactory.create_parser(file_path_or_url="/path/to/your/file.docx")
-if parser:
-    parsed_content = parser.parse() # Or parser.parse(file_path_or_url) if not given at init
-    print(parsed_content)
+# Ensure your .env file is in the current working directory or environment variables are set
+try:
+    # Get a client (e.g., OpenAI)
+    # client = OpenAILLMClient() 
+    # Or use the factory:
+    client = LLMClientFactory.create_client(client_type="openai")
+
+    # Initialize the processor
+    processor = StandardPromptProcessor()
+
+    # Define a prompt configuration
+    prompt_config = {
+        "name": "greeting_prompt",
+        "prompt": "Generate a friendly greeting for a new user named Alex.",
+        # "schema": {"type": "object", "properties": {"greeting": {"type": "string"}}} # Optional schema
+    }
+
+    # Process the prompt
+    result = processor.process(
+        client=client,
+        prompt_config=prompt_config,
+        temperature=0.7,
+        max_tokens=50
+    )
+    print(f"Standard Processor Result: {result}")
+    # Expected: {'name': 'greeting_prompt_processed', 'result': 'Hello Alex, welcome!'} (or similar)
+
+except Exception as e:
+    print(f"Error in Standard Processor example: {e}")
+```
+
+### 5. Accessing Environment Variables
+
+```python
+from llm_factory import ENV_VARS, get_client_config
+
+# Access all loaded environment variables (filtered by llm_factory's interests)
+# print(f"Loaded ENV_VARS: {ENV_VARS}")
+
+# Get specific configuration for a client
+openai_config = get_client_config("openai")
+if openai_config:
+    print(f"OpenAI API Key (from get_client_config): {openai_config.get('api_key')}")
 else:
-    print("Could not create a parser for the given file type.")
+    print("OpenAI configuration not found.")
+
+azure_config = get_client_config("azure")
+if azure_config:
+    print(f"Azure Endpoint (from get_client_config): {azure_config.get('azure_endpoint')}")
+else:
+    print("Azure configuration not found.")
 ```
 
 ---
