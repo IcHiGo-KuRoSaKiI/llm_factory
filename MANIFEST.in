@@ -1,7 +1,21 @@
 include README.md
 include requirements.txt
-recursive-include clients *.py
-recursive-include examples *.py
-recursive-include parsers *.py
-recursive-include processors *.py
-recursive-include utils *.py
+
+# Include all files from the examples directory
+recursive-include examples *
+
+# Graft the actual package directory to include all its contents (Python and non-Python files)
+# This ensures that data files, templates, etc., within your llm_factory package are included.
+graft llm_factory/llm_factory
+
+# Prune the old top-level directories if they were accidentally included or for cleanup
+# (though they shouldn't be part of the package data if find_packages is working correctly)
+prune clients
+prune parsers
+prune processors
+prune utils
+
+# Exclude common unwanted files from the sdist
+global-exclude *.py[co]
+global-exclude __pycache__
+global-exclude .DS_Store
