@@ -1,3 +1,5 @@
+# How To RUN 
+# python -m examples.example_parser_vision
 import os
 import json
 import base64
@@ -270,11 +272,24 @@ if __name__ == "__main__":
 
     # Example 2: Process a document with LM Studio
     print("\n=== Example 2: Process a Document with LM Studio ===")
-    document_result = process_document(
-        file_path="/Users/ichigo/Documents/GitHub/llm_factory/Functional Requirements.docx",
-        client_type="lmstudio",
-        output_path="lmstudio_document_result.json",
-        **lmstudio_config
+    # document_result = process_document(
+    #     file_path="./Functional Requirements.docx",
+    #     client_type="lmstudio",
+    #     output_path="lmstudio_document_result.json",
+    #     **lmstudio_config
+    # )
+    
+    
+    azure_config = {
+        "azure_endpoint": os.getenv("AZURE_BASE_ENDPOINT"),
+        "api_key": os.getenv("AZURE_API_KEY"),
+        "api_version": os.getenv("AZURE_API_VERSION")
+    }
+    azure_result = process_document(
+        file_path="./Functional Requirements.docx",
+        client_type="azure",
+        output_path="azure_result.json",
+        **azure_config
     )
     
 

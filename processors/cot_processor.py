@@ -73,7 +73,10 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             
             logger.info(f"\n=== Processing Pipeline: {pipeline_name} ===")
             logger.info(f"Total steps: {len(steps)}")
-            logger.info(f"Initial context data: {'Provided' if context_data else 'None'}")
+            # Improved context data logging - check both pipeline and step level
+            first_step_context = steps[0].get('context_data') if steps else None
+            has_context = context_data is not None or first_step_context is not None
+            logger.info(f"Initial context data: {'Provided' if has_context else 'None'}")
             
             results = {}
             failed_steps = []
@@ -302,7 +305,10 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
         """Process a new problem step with improved schema handling"""
         from langchain_core.messages import HumanMessage, AIMessage
         try:
+            # Prune history to keep it manageable
             self._prune_message_history(max_messages=5)
+            
+            # Get step parameters
             prompt_text = step.get('prompt', '')
             input_key = step.get('input_key', '')
             schema = step.get('schema')
@@ -313,30 +319,41 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             if not prompt_text:
                 return {'success': False, 'error': 'Empty prompt in new problem step'}
             
+            # Build the prompt by including previous results if specified
             if input_key and input_key in previous_results:
-                # Extract just the conclusion rather than full previous result
                 prev_result = previous_results[input_key]
+                # Extract just the conclusion for brevity
                 conclusion = self._extract_conclusion(prev_result)
                 prompt_text = f"Previous result conclusion:\n```\n{conclusion}\n```\n\n{prompt_text}"
                 
             if "previous analysis" not in prompt_text.lower():
                 prompt_text = f"Continue the analysis based on the previous conclusion. Be concise.\n\n{prompt_text}"
 
+            # Add context data if provided
             if context_data:
                 context_str = context_data if isinstance(context_data, str) else json.dumps(context_data, indent=2)
                 prompt_text = f"Context Data:\n```\n{context_str}\n```\n\n{prompt_text}"
             
             # Enhance prompt for JSON schema if present
             if schema:
+                # If schema is a string, try to parse it as JSON
+                if isinstance(schema, str):
+                    try:
+                        schema = json.loads(schema)
+                    except:
+                        pass
+                        
+                # Add explicit instructions about the schema format
                 schema_str = json.dumps(schema, indent=2)
                 prompt_text += f"\n\nYou MUST format your response as a valid JSON object that conforms to the following schema:\n```json\n{schema_str}\n```\n"
                 prompt_text += "Important: Your response must be a properly formatted JSON object without any additional text, markdown, or explanation."
             
+            # Create and add user message to history
             user_msg = HumanMessage(content=prompt_text)
             self.message_history.append(user_msg)
             self.raw_history.append({'role': 'user', 'content': user_msg.content})
             
-            # Convert the message history to a format the client can use
+            # Convert message history to API format
             messages = []
             for msg in self.message_history:
                 if isinstance(msg, HumanMessage):
@@ -348,6 +365,10 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             
             # Generate response using the client
             if schema:
+                # Determine client type to format schema correctly
+                client_type = getattr(client, "__class__", "").__name__
+                
+                # Generate with schema
                 response = client.generate_completion(
                     messages=messages,
                     temperature=step_temperature,
@@ -356,6 +377,7 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 )
                 structured_output = response
             else:
+                # Standard text generation
                 response = client.generate_completion(
                     messages=messages,
                     temperature=step_temperature,
@@ -367,16 +389,17 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             ai_msg = AIMessage(content=str(response) if isinstance(response, dict) else response)
             self.message_history.append(ai_msg)
             
-            # Use the actual content for the raw history, not the stringified version
+            # Use the actual content for the raw history
             self.raw_history.append({
                 'role': 'assistant', 
                 'content': response if isinstance(response, str) else json.dumps(response, indent=2)
             })
             
             return {'success': True, 'output': structured_output}
-            
+                
         except Exception as e:
             return {'success': False, 'error': f"Error processing new problem step: {str(e)}"}
+
 
 
     def _process_tonality_step(self, client, step, previous_results, temperature, max_tokens):
@@ -627,6 +650,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
         return self._process_regular_step(client, step, previous_results, "SUMMARY", temperature, max_tokens)
 
 
+    # Helper method to extract conclusion from text
+
     def _extract_conclusion(self, text):
         """Extract just the conclusion from a longer text"""
         # For math problems, look for lines with solutions/coordinate pairs
@@ -641,6 +666,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             # If no clear conclusion line found, just take the last 2-3 lines
             return "\n".join(lines[-3:])
         return str(text)
+
+
 
     def _prune_message_history(self, max_messages=5):
         """Prune message history to keep only important context"""

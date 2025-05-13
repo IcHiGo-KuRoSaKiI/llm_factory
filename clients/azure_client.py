@@ -134,6 +134,19 @@ class AzureLLMClient(BaseLLMClient):
                 # Handle JSON schema if provided
                 if response_format and response_format.get("type") == "json_schema":
                     schema = response_format.get("json_schema", {})
+                    
+                    # Process schema to ensure it has title and description (required by Azure)
+                    # If schema is in format {"name": X, "schema": Y}, extract the inner schema
+                    if "name" in schema and "schema" in schema:
+                        schema = schema["schema"]
+                    
+                    # Ensure title and description are present
+                    if "title" not in schema:
+                        schema["title"] = schema.get("name", "OutputSchema")
+                    if "description" not in schema:
+                        schema["description"] = "Schema for structured output"
+                    
+                    # Create a structured output with this schema
                     llm_with_schema = llm.with_structured_output(
                         schema=schema,
                         include_raw=True
@@ -151,6 +164,8 @@ class AzureLLMClient(BaseLLMClient):
                     
                     # Create AI message for history
                     ai_msg = AIMessage(content=ai_msg_content)
+
+                
                 else:
                     # Standard text generation
                     ai_msg = llm.invoke(langchain_messages)

@@ -1,5 +1,6 @@
 # clients/lmstudio_client.py
 import json
+from tempfile import tempdir
 import time
 import logging
 import base64
@@ -184,22 +185,30 @@ class LMStudioClient(BaseLLMClient):
                         schema = response_format.get("json_schema", {})
                         
                         # Format the schema according to LM Studio's expected format
-                        # LM Studio expects a specific nested format with 'name' and 'schema' fields
-                        schema_name = schema.get("title", "output_schema") if isinstance(schema, dict) else "output_schema"
+                        # LM Studio expects a specific format
+                        schema_name = schema.get("title", "output_schema")
                         
-                        # Format schema according to LM Studio's expected structure
-                        lm_studio_schema = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": schema_name,
-                                "schema": schema
+                        # Handle different schema structures
+                        if "schema" in schema:
+                            # If schema is already in the format {"name": X, "schema": Y}
+                            lm_studio_schema = {
+                                "type": "json_schema",
+                                "json_schema": schema
                             }
-                        }
+                        else:
+                            # Need to wrap the schema in the expected format
+                            lm_studio_schema = {
+                                "type": "json_schema", 
+                                "json_schema": {
+                                    "name": schema_name,
+                                    "schema": schema
+                                }
+                            }
                         
                         # Apply the formatted schema
                         completion_params["response_format"] = lm_studio_schema
                         
-                        # Also add a hint in the last message to enforce JSON output
+                        # Add a hint to enforce JSON output
                         last_message_index = len(all_messages) - 1
                         if last_message_index >= 0 and "content" in all_messages[last_message_index]:
                             content = all_messages[last_message_index]["content"]
@@ -208,6 +217,8 @@ class LMStudioClient(BaseLLMClient):
                                     f"{content}\n\nRespond with a structured JSON object that strictly follows "
                                     f"the specified schema. Do not include explanations or markdown formatting."
                                 )
+
+                
                 
                 # Add any additional parameters
                 for key, value in kwargs.items():

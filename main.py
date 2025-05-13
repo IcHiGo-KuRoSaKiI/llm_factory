@@ -166,30 +166,30 @@ def example_usage():
     }
 
     
-    # cot_result = run_cot_pipeline(
-    #     pipeline_config=cot_config,
-    #     client_type="groq",
-    #     temperature=0
-    # )
+    cot_result = run_cot_pipeline(
+        pipeline_config=cot_config,
+        client_type="azure",
+        temperature=0
+    )
 
     # print("Chain of Thought Pipeline Result:", json.dumps(cot_result, indent=2))
     
 
-    print("\n=== Example : Using Ollama Studio Model ===")
+    # print("\n=== Example : Using Ollama Studio Model ===")
     
-    lmstudio_config = {
-        "base_url": os.environ.get("LM_SUDIO"),
-        "temperature": 0,
-        "max_tokens": 8000
-    }
+    # lmstudio_config = {
+    #     "base_url": os.environ.get("LM_SUDIO"),
+    #     "temperature": 0,
+    #     "max_tokens": 8000
+    # }
 
-    cot_result = run_pipeline(
-        prompt_config=cot_config,
-        client_type="lmstudio",
-        # client_type="ollama",
-        pipeline_type="multi_step",
-        **lmstudio_config
-    )
+    # cot_result = run_pipeline(
+    #     prompt_config=cot_config,
+    #     client_type="lmstudio",
+    #     # client_type="ollama",
+    #     pipeline_type="multi_step",
+    #     **lmstudio_config
+    # )
 
 
     # cot_result = run_cot_pipeline(

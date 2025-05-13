@@ -4,12 +4,20 @@ import json
 import logging
 import os
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 from llm_factory import run_pipeline
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(override=True)
+
+# # Debug prints
+# print(f"All environment variables: {dict(os.environ)}")
+# print(f"DEFAULT_CLIENT_TYPE: {os.getenv('DEFAULT_CLIENT_TYPE')}")
+# print(f"LM_STUDIO URL: {os.getenv('LM_STUDIO')}")
+
+
 
 # Configure logging
 logging.basicConfig(
@@ -44,70 +52,55 @@ def load_json_as_string(file_path):
         logger.error(f"Error loading JSON file: {str(e)}")
         return None
 
-# Example usage of the function
-# json_string = load_json_as_string('/path/to/your/json/file.json')
-# if json_string:
-#     print(json_string)
-#     # Use json_string as input for other operations
+# Define Pydantic models for the graph structure
+class Position(BaseModel):
+    """Position with x and y coordinates"""
+    x: float = Field(..., description="X-axis coordinate value")
+    y: float = Field(..., description="Y-axis coordinate value")
 
-# Define the correct schema format (matching your working example)
-json_schema = {
-    "type": "object",
-    "properties": {
-        "component_name": {"type": "string"},
-        "description": {"type": "string"},
-        "tech_stack": {
-            "type": "array",
-            "items": {"type": "string"}
-        },
-        "dependencies": {
-            "type": "array",
-            "items": {"type": "string"}
+class NodeChild(BaseModel):
+    """Child node in graph structure"""
+    id: str = Field(..., description="Unique identifier for the node")
+    text: str = Field(..., description="Label or description of the node")
+    position: Position = Field(..., description="Position of the node")
+
+class GraphNode(BaseModel):
+    """Graph node with position and children"""
+    id: str = Field(..., description="Unique identifier for the node")
+    text: str = Field(..., description="Label or description of the node")
+    position: Position = Field(..., description="Position of the node")
+    children: Optional[List[NodeChild]] = Field(default=[], description="Child nodes")
+
+def format_schema_for_client(schema, client_type):
+    """
+    Format a schema based on the client type to ensure compatibility
+    
+    Args:
+        schema: JSON schema (dict) or Pydantic model schema
+        client_type: Type of client ("azure", "lmstudio", etc.)
+        
+    Returns:
+        Properly formatted schema for the specified client
+    """
+    # If schema is a Pydantic model, get its JSON schema
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        schema = schema.model_json_schema()
+    
+    if client_type.lower() == "azure":
+        # Azure requires a specific format with title and description
+        return {
+            "title": schema.get("title", "OutputSchema"),
+            "description": schema.get("description", "Schema for structured output"),
+            "type": "object",
+            "properties": schema.get("properties", {}),
+            "required": schema.get("required", [])
         }
-    },
-    "required": ["component_name", "description", "tech_stack", "dependencies"]
-}
-
-# This is the proper CoT configuration with the correct schema format
-
-
-json_string = load_json_as_string('/Users/ichigo/Documents/GitHub/llm_factory/lmstudio_document_result.json')
-
-
-# prompt1 = """You are an experienced project manager and solution architect with a strong background in analyzing requirements and developing infrastructure solutions for various projects. 
-# Your task is to read and understand a Statement of Work (SOW) document and gather insights regarding the necessary infrastructure for project implementation. Here are the details you need to consider:  
-
-# SOW Document: __________  
-# Project Goals: __________  
-# Existing Infrastructure: __________  
-# Required Features: __________  
-# Budget Constraints: __________
-
-
-# The insights should be structured in a clear and concise format, including an overview of the project, identified requirements, recommended infrastructure components, potential challenges, and a timeline for implementation. 
-
-# Please ensure your analysis covers all critical aspects of the project and provides actionable recommendations based on the gathered insights. 
-
-# Constraints:  
-
-# Avoid technical jargon that may not be understood by all stakeholders.  
-# Keep the response focused on practical solutions rather than theoretical concepts.  
-# Be cautious of budget limitations and suggest cost-effective solutions.
-
-
-# Example insights you might include:  
-
-# "For the project to succeed, we recommend implementing a cloud-based infrastructure due to its scalability and flexibility."  
-# "The current infrastructure lacks the capacity to handle the projected workload; hence, we suggest upgrading the server capabilities."
-# """
-
-# prompt2= """You are a knowledgeable data architect with extensive experience in creating structured data representations and graphs in JSON format. Your expertise lies in analyzing complex documents and extracting relevant infrastructure knowledge to represent it effectively.
-# Your task is to create a JSON graph based on the infrastructure knowledge extracted from the following document. Please review the document and follow the provided JSON schema to structure your output.
-
-# The JSON graph should clearly represent the relationships and entities discussed in the document. Use appropriate keys and values as specified in the JSON schema to ensure a coherent structure.
-# """
-
-
+    elif client_type.lower() == "lmstudio":
+        # LM Studio just needs a regular JSON schema
+        return schema
+    else:
+        # Default to the original schema
+        return schema
 
 # First prompt - analyze document
 prompt1 = """You are an experienced project manager and solution architect. 
@@ -132,102 +125,87 @@ You MUST follow this exact format for each node:
 Start with a root node and add child nodes for each major component. Position nodes logically with x,y coordinates (use numbers between 0-1000).
 """
 
-
-
-graph_node_schema = {
-    "type": "object",
-    "properties": {
-      "id": {
-        "type": "string",
-        "description": "Unique identifier for the node"
-      },
-      "text": {
-        "type": "string",
-        "description": "Label or description of the node"
-      },
-      "position": {
-        "type": "object",
-        "properties": {
-          "x": {"type": "number"},
-          "y": {"type": "number"}
-        },
-        "required": ["x", "y"]
-      },
-      "children": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "id": {"type": "string"},
-            "text": {"type": "string"},
-            "position": {
-              "type": "object",
-              "properties": {
-                "x": {"type": "number"},
-                "y": {"type": "number"}
-              },
-              "required": ["x", "y"]
-            }
-          },
-          "required": ["id", "text", "position"]
-        }
-      }
-    },
-    "required": ["id", "text", "position"]
-}
+json_string = load_json_as_string('./azure_result.json')
 
 
 
+# Set client type - change to "azure" when using Azure OpenAI
+client_type = os.getenv("DEFAULT_CLIENT_TYPE", "lmstudio").lower()
 
+# Get the Pydantic schema and format it for the client
+pydantic_schema = GraphNode.model_json_schema()
+formatted_schema = format_schema_for_client(pydantic_schema, client_type)
+
+# For Azure, we need to adapt the schema to match their expected format
+if client_type.lower() == "azure":
+    # Azure needs a wrapper with name and schema for JSON schema
+    azure_schema = {
+        "name": "GraphNodeSchema",
+        "schema": formatted_schema
+    }
+    formatted_schema = azure_schema
+
+# Print schema for debugging
+print(f"Formatted schema for {client_type}: {json.dumps(formatted_schema, indent=2)}")
+
+
+
+# Create the CoT pipeline configuration
+
+# print  (json_string)
 cot_config = {
     "name": "problem_solver",
     "steps": [
         {
             "type": "initialPrompt",
             "name": "understand_problem",
-            "prompt": prompt1 ,
-            "output_key": "problem_analysis",
-            "context_data" : json_string,
+            "prompt": prompt1,
+            "output_key": "problem_analysis"
+        },
+         {
+            "type": "initialPrompt",
+            "name": "understand_problem",
+            "prompt": "what did u understand from the document ?? ",
+            "input_key": "problem_analysis",
+            "output_key": "problem_analysis2",
+        },
+        {
+            "type": "finalAnswer",
+            "name": "final_answer",
+            "prompt": prompt2,
+            "input_key": "problem_analysis",
+            "schema": formatted_schema,
             "output_key": "final_answer_output"
-        }
-        # {
-        #     "type": "finalAnswer",
-        #     "name": "final_answer",
-        #     "prompt": prompt2 , 
-        #     "input_key": "problem_analysis",  # Reference the previous step's output
-        #     "schema": graph_node_schema,  # Pass the schema directly
-        #     "output_key": "final_answer_output"
-        # }
-    ]
+        },
+        
+    ],
+    "context_data" : json_string
 }
 
-print("\n=== Example: Using LM Studio Model ===")
+print(f"\n=== Example: Using {client_type.capitalize()} Model ===")
 
-lmstudio_config = {
-    "base_url": os.environ.get("LM_SUDIO" ),
-    "temperature": 0,
-    "max_tokens": 8000
-}
+# Configure client parameters
+if client_type.lower() == "lmstudio":
+    client_config = {
+        "base_url": os.environ.get("LM_STUDIO"),
+        "temperature": 0,
+        "max_tokens": 8000
+    }
+else:
+    client_config = {
+        "temperature": 0,
+        "max_tokens": 8000
+    }
 
+# Run the pipeline
 cot_result = run_pipeline(
     prompt_config=cot_config,
-    client_type="lmstudio",
+    client_type=client_type,
     pipeline_type="multi_step",
-    **lmstudio_config
+    **client_config
 )
 
-
-
-# cot_result = run_pipeline(
-#     prompt_config=cot_config,
-#     client_type="openai",
-#     pipeline_type="multi_step",
-#     # **lmstudio_config
-# )
-
+print ( cot_result )
 final_json = cot_result["problem_solver"]["final_output"]
 print("\nStructured Output:")
-
-print(final_json)
-
-
+print(json.dumps(final_json, indent=2) if isinstance(final_json, dict) else final_json)
