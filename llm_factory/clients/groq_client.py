@@ -5,7 +5,7 @@ import time
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from .base_client import BaseLLMClient
+from llm_factory.clients.base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
