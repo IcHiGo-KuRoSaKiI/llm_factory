@@ -29,35 +29,56 @@ from .env_loader import ENV_VARS, get_client_config
 
 from .core import (
     run_pipeline,
-    LLMClient,
+    LLMClient, # This is the base class, kept for type hinting
     LLMClientFactory,
-    PromptProcessor,
+    PromptProcessor, # This is the base class, kept for type hinting
     PromptProcessorFactory
+)
+
+# Exposing specific client implementations and base class
+from .clients import (
+    BaseLLMClient, # Exposed as per README structure for extension
+    AzureLLMClient,
+    GroqLLMClient,
+    LMStudioClient,
+    OllamaLLMClient,
+    OpenAILLMClient
 )
 
 # Exposing specific parsers and the parser factory
 from .parsers.factory import ParserFactory
+from .parsers.base_parser import BaseParser # Exposed for extension
 from .parsers.pdf.parser import PDFParser
-# If you have DocxParser and PptxParser and want to expose them:
-# from .parsers.docx.parser import DocxParser
-# from .parsers.pptx.parser import PptxParser
+from .parsers.docx.parser import DocxParser
+from .parsers.pptx.parser import PPTProcessor # Assuming PPTProcessor is the class for PPTX
 
-# Exposing specific clients can also be useful
-# from .clients.azure_client import AzureLLMClient
-# from .clients.openai_client import OpenAILLMClient
+# Exposing specific processor implementations and base class
+from .processors import (
+    BasePromptProcessor, # Exposed for extension
+    StandardPromptProcessor,
+    ChainOfThoughtProcessor
+)
 
 __all__ = [
     "run_pipeline",
-    "LLMClient",
     "LLMClientFactory",
-    "PromptProcessor",
+    "LLMClient", # Base Class
+    "BaseLLMClient", # Base Class for clients, for users to extend
+    "AzureLLMClient",
+    "GroqLLMClient",
+    "LMStudioClient",
+    "OllamaLLMClient",
+    "OpenAILLMClient",
     "PromptProcessorFactory",
+    "PromptProcessor", # Base Class
+    "BasePromptProcessor", # Base Class for processors, for users to extend
+    "StandardPromptProcessor",
+    "ChainOfThoughtProcessor",
     "ParserFactory",
+    "BaseParser", # Base Class for parsers, for users to extend
     "PDFParser",
-    # "DocxParser", # Add if exposed and imported
-    # "PptxParser", # Add if exposed and imported
-    # "AzureLLMClient", # Add if exposed and imported
-    # "OpenAILLMClient", # Add if exposed and imported
+    "DocxParser",
+    "PPTProcessor",
     "ENV_VARS",
-    "get_client_config",
+    "get_client_config"
 ]

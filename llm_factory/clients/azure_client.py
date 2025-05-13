@@ -9,7 +9,7 @@ from langchain_openai import AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from openai import AzureOpenAI
 
-from .base_client import BaseLLMClient
+from llm_factory.clients.base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
