@@ -20,3 +20,8 @@ Pillow>=9.5.0
 python-json-logger>=2.0.7
 requests>=2.31.0
 tqdm>=4.66.1
+
+python-pptx
+pdf2image 
+pillow 
+matplotlib
