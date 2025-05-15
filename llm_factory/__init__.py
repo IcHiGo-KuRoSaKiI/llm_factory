@@ -17,7 +17,8 @@ if not os.environ.get("_LLM_FACTORY_INIT_DOTENV_LOADED"):
     # load_dotenv() will search for .env in the current working directory and its parents,
     # or a path specified by python_dotenv_path argument.
     # By default, it does not override existing environment variables.
-    load_dotenv(verbose=False, override=False) # verbose=False to suppress "file not found" messages if .env doesn't exist
+    # verbose=False to suppress "file not found" messages if .env doesn't exist
+    load_dotenv(verbose=False, override=False)
     os.environ["_LLM_FACTORY_INIT_DOTENV_LOADED"] = "1"
 
 # Import and expose main API at package level.
@@ -29,15 +30,15 @@ from .env_loader import ENV_VARS, get_client_config
 
 from .core import (
     run_pipeline,
-    LLMClient, # This is the base class, kept for type hinting
+    LLMClient,  # This is the base class, kept for type hinting
     LLMClientFactory,
-    PromptProcessor, # This is the base class, kept for type hinting
+    PromptProcessor,  # This is the base class, kept for type hinting
     PromptProcessorFactory
 )
 
 # Exposing specific client implementations and base class
 from .clients import (
-    BaseLLMClient, # Exposed as per README structure for extension
+    BaseLLMClient,  # Exposed as per README structure for extension
     AzureLLMClient,
     GroqLLMClient,
     LMStudioClient,
@@ -47,38 +48,48 @@ from .clients import (
 
 # Exposing specific parsers and the parser factory
 from .parsers.factory import ParserFactory
-from .parsers.base_parser import BaseParser # Exposed for extension
+from .parsers.base_parser import BaseParser  # Exposed for extension
 from .parsers.pdf.parser import PDFParser
 from .parsers.docx.parser import DocxParser
-from .parsers.pptx.parser import PPTProcessor # Assuming PPTProcessor is the class for PPTX
+# Assuming PPTProcessor is the class for PPTX
+from .parsers.pptx.parser import PPTProcessor
 
 # Exposing specific processor implementations and base class
-from .processors import (
-    BasePromptProcessor, # Exposed for extension
-    StandardPromptProcessor,
-    ChainOfThoughtProcessor
+# Import utility functions
+from llm_factory.utils import (
+    encode_image_to_base64,
+    convert_to_data_uri,
+    image_to_data_uri,
+    PromptEnhancer,
+    enhance_prompt
 )
 
 __all__ = [
     "run_pipeline",
     "LLMClientFactory",
-    "LLMClient", # Base Class
-    "BaseLLMClient", # Base Class for clients, for users to extend
+    "LLMClient",  # Base Class
+    "BaseLLMClient",  # Base Class for clients, for users to extend
     "AzureLLMClient",
     "GroqLLMClient",
     "LMStudioClient",
     "OllamaLLMClient",
     "OpenAILLMClient",
     "PromptProcessorFactory",
-    "PromptProcessor", # Base Class
-    "BasePromptProcessor", # Base Class for processors, for users to extend
+    "PromptProcessor",  # Base Class
+    "BasePromptProcessor",  # Base Class for processors, for users to extend
     "StandardPromptProcessor",
     "ChainOfThoughtProcessor",
     "ParserFactory",
-    "BaseParser", # Base Class for parsers, for users to extend
+    "BaseParser",  # Base Class for parsers, for users to extend
     "PDFParser",
     "DocxParser",
     "PPTProcessor",
     "ENV_VARS",
-    "get_client_config"
+    "get_client_config",
+    # Utility functions
+    "encode_image_to_base64",
+    "convert_to_data_uri",
+    "image_to_data_uri",
+    "PromptEnhancer",
+    "enhance_prompt"
 ]
