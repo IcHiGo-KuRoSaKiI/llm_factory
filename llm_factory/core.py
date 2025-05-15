@@ -64,21 +64,21 @@ class LLMClientFactory:
     def create_client(client_type: str, **kwargs) -> LLMClient:
         """Create an LLM client of the specified type"""
         if client_type.lower() == "azure":
-            from clients.azure_client import AzureLLMClient
+            from llm_factory.clients.azure_client import AzureLLMClient
             return AzureLLMClient(**kwargs)
         elif client_type.lower() == "groq":
-            from clients.groq_client import GroqLLMClient
+            from llm_factory.clients.groq_client import GroqLLMClient
             return GroqLLMClient(**kwargs)
         elif client_type.lower() == "openai":
-            from clients.openai_client import OpenAILLMClient
+            from llm_factory.clients.openai_client import OpenAILLMClient
             return OpenAILLMClient(**kwargs)
         elif client_type.lower() in ["lmstudio", "local"]:
-            from clients.lmstudio_client import LMStudioClient
+            from llm_factory.clients.lmstudio_client import LMStudioClient
             # Check if model supports vision
             supports_vision = kwargs.pop("supports_vision", False)
             return LMStudioClient(supports_vision=supports_vision, **kwargs)
         elif client_type.lower() in ["ollama"]:
-            from clients.ollama_client import OllamaLLMClient
+            from llm_factory.clients.ollama_client import OllamaLLMClient
             return OllamaLLMClient(**kwargs)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
@@ -91,10 +91,10 @@ class PromptProcessorFactory:
     def create_processor(pipeline_type: str) -> PromptProcessor:
         """Create a prompt processor of the specified type"""
         if pipeline_type.lower() == "standard":
-            from processors.standard_processor import StandardPromptProcessor
+            from llm_factory.processors.standard_processor import StandardPromptProcessor
             return StandardPromptProcessor()
         elif pipeline_type.lower() in ["cot", "chain_of_thought", "multi_step"]:
-            from processors.cot_processor import ChainOfThoughtProcessor
+            from llm_factory.processors.cot_processor import ChainOfThoughtProcessor
             return ChainOfThoughtProcessor()
         else:
             raise ValueError(f"Unsupported pipeline type: {pipeline_type}")

@@ -8,7 +8,7 @@ import argparse
 
 # Import the llm_factory components
 from llm_factory import run_pipeline, LLMClientFactory
-from utils.image_utils import image_to_data_uri
+from llm_factory import image_to_data_uri
 
 # Configure logging
 logging.basicConfig(
