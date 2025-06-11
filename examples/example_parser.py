@@ -1,6 +1,6 @@
 import os
 import json
-from parsers.factory import ParserFactory
+from llm_factory import ParserFactory
 
 # Mock OpenAI helper for example purposes
 class MockOpenAIHelper:
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         logger = MockLogger()
         
         # Sample file path - adjust as needed
-        file_path = "/Users/ichigo/Documents/GitHub/llm_factory/Functional Requirements.docx"
+        file_path = r"C:\Users\fds44813\Downloads\Bank Guidelines - Income Statement.pdf"
         
         # Create parser using factory
         parser = ParserFactory.create_parser(file_path, openai_helper, logger)
@@ -101,7 +101,7 @@ if __name__ == "__main__":
         result = parser.parse(file_path)
         
         # Save results to JSON file
-        output_json_path = "/Users/ichigo/Documents/GitHub/llm_factory/parsing_results.json"
+        output_json_path = "./parsing_results.json"
         try:
             with open(output_json_path, 'w', encoding='utf-8') as json_file:
                 json.dump(result, json_file, indent=2, ensure_ascii=False)

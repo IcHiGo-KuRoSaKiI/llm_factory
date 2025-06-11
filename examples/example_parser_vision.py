@@ -5,7 +5,7 @@ import json
 import base64
 from typing import Optional, Dict, List, Any
 from dotenv import load_dotenv
-from parsers.factory import ParserFactory
+from llm_factory import ParserFactory
 from llm_factory import LLMClientFactory
 
 # Load environment variables from .env file
@@ -114,7 +114,7 @@ def process_image(
 
 def process_document(
     file_path: str,
-    client_type: str = "lmstudio",
+    client_type: str = "azure",
     output_path: Optional[str] = None,
     **client_kwargs
 ) -> List[Dict[str, Any]]:
@@ -181,7 +181,7 @@ def process_document(
 
 def process_document_directory(
     directory_path: str,
-    client_type: str = "lmstudio",
+    client_type: str = "azure",
     output_path: Optional[str] = None,
     **client_kwargs
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -270,11 +270,11 @@ def process_document_directory(
 if __name__ == "__main__":
     # Example 1: Process a single image with LM Studio
     # print("\n=== Example 1: Process a Single Image with LM Studio ===")
-    lmstudio_config = {
-        # "base_url": "http://localhost:1234",
-        "base_url": os.environ.get("LM_SUDIO"),
-        "supports_vision": True  # Force vision support
-    }
+    # lmstudio_config = {
+    #     # "base_url": "http://localhost:1234",
+    #     "base_url": os.environ.get("LM_SUDIO"),
+    #     "supports_vision": True  # Force vision support
+    # }
     # image_result = process_image(
     #     image_path="path/to/your/image.jpg",
     #     client_type="lmstudio",
@@ -284,23 +284,26 @@ if __name__ == "__main__":
     # print(f"Extracted text: {image_result[:150]}...")
 
     # Example 2: Process a document with LM Studio
-    print("\n=== Example 2: Process a Document with LM Studio ===")
-    # document_result = process_document(
-    #     file_path="./Functional Requirements.docx",
-    #     client_type="lmstudio",
-    #     output_path="lmstudio_document_result.json",
-    #     **lmstudio_config
-    # )
+    # print("\n=== Example 2: Process a Document with LM Studio ===")
+    # # document_result = process_document(
+    # #     file_path="./Functional Requirements.docx",
+    # #     client_type="lmstudio",
+    # #     output_path="lmstudio_document_result.json",
+    # #     **lmstudio_config
+    # # )
+
+    # os.environ['SSL_CERT_FILE'] = r'C:\Users\fds44813\OneDrive - FactSet\Desktop\Projects\llm_factory\ca-bundle-full.crt'
 
     azure_config = {
         "azure_endpoint": os.getenv("AZURE_BASE_ENDPOINT"),
         "api_key": os.getenv("AZURE_API_KEY"),
         "api_version": os.getenv("AZURE_API_VERSION")
     }
+    print(azure_config)
     azure_result = process_document(
-        file_path="./Functional Requirements.docx",
+        file_path=r"Solution Architecture Final.pptx",
         client_type="azure",
-        output_path="azure_result.json",
+        output_path="./azure_result.json",
         **azure_config
     )
 
