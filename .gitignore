@@ -193,3 +193,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 Solution Architecture Final.pptx
+
+
+/llm_env
+/json_schemas_for_UML.json
