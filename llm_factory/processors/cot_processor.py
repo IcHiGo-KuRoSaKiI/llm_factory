@@ -1,7 +1,7 @@
-
 # processors/cot_processor.py
 import json
 import logging
+import hashlib
 from typing import Any, Dict, List, Optional, Union
 
 from .base_processor import BasePromptProcessor
@@ -10,20 +10,48 @@ logger = logging.getLogger(__name__)
 
 
 class ChainOfThoughtProcessor(BasePromptProcessor):
-    """Processor for Chain of Thought (CoT) pipelines"""
+    """
+    Enhanced Processor for Chain of Thought (CoT) pipelines with fine-tuning capabilities.
+
+    New Feature: Automatic prompt fine-tuning using the 'fine_tune_prompt' keyword.
+    When 'fine_tune_prompt' is present in the pipeline config, each step's prompt
+    will be automatically enhanced before execution.
+    """
 
     def __init__(self):
-        """Initialize the Chain of Thought processor"""
+        """Initialize the Chain of Thought processor with fine-tuning capabilities"""
         self.message_history = []  # For CoT pipeline
         self.raw_history = []      # For CoT pipeline
 
+        # Fine-tuning related attributes
+        self.fine_tune_cache = {}  # Cache for fine-tuned prompts
+        self.fine_tuning_enabled = False
+        self.fine_tune_prompt = None
+        self.prompt_enhancer = None
+        self.pipeline_context = {}  # Store context from previous steps
+
     def process(self, client, prompt_config: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        """Process a Chain of Thought pipeline"""
+        """Process a Chain of Thought pipeline with optional fine-tuning"""
         try:
             # Extract pipeline configuration
             pipeline_name = prompt_config.get('name', 'unnamed_pipeline')
             steps = prompt_config.get('steps', [])
             context_data = prompt_config.get('context_data')
+
+            # NEW: Check for fine-tuning configuration
+            self.fine_tune_prompt = prompt_config.get('fine_tune_prompt')
+            self.fine_tuning_enabled = bool(self.fine_tune_prompt)
+
+            if self.fine_tuning_enabled:
+                logger.info(
+                    f"🔧 Fine-tuning enabled for pipeline: {pipeline_name}")
+                logger.info(
+                    f"Fine-tuning instruction: {self.fine_tune_prompt[:100]}...")
+
+                # Initialize the prompt enhancer
+                self._initialize_prompt_enhancer(client)
+            else:
+                logger.info(f"📋 Processing standard pipeline: {pipeline_name}")
 
             # Validate required inputs
             if not steps:
@@ -33,6 +61,11 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             # Reset history for this new pipeline
             self.message_history = []
             self.raw_history = []
+            self.pipeline_context = {
+                'pipeline_name': pipeline_name,
+                'context_data': context_data,
+                'completed_steps': []
+            }
 
             # Process the pipeline
             pipeline_result = self._process_pipeline(
@@ -42,6 +75,13 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 context_data=context_data,
                 **kwargs
             )
+
+            # Add fine-tuning metadata to results
+            if self.fine_tuning_enabled:
+                pipeline_result['fine_tuning_applied'] = True
+                pipeline_result['fine_tune_instruction'] = self.fine_tune_prompt
+                pipeline_result['cache_hits'] = len(
+                    [k for k in self.fine_tune_cache.keys()])
 
             return {
                 pipeline_name: pipeline_result
@@ -57,6 +97,141 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 }
             }
 
+    def _initialize_prompt_enhancer(self, client):
+        """Initialize the prompt enhancer for fine-tuning"""
+        try:
+            from llm_factory.utils import PromptEnhancer
+            self.prompt_enhancer = PromptEnhancer(client=client)
+            logger.info("✅ Prompt enhancer initialized successfully")
+        except Exception as e:
+            logger.warning(
+                f"⚠️ Failed to initialize prompt enhancer: {str(e)}")
+            self.fine_tuning_enabled = False
+
+    def _fine_tune_step_prompt(self, step: Dict[str, Any], step_index: int) -> Dict[str, Any]:
+        """
+        Fine-tune a step's prompt using the PromptEnhancer.
+
+        Args:
+            step: The step configuration to fine-tune
+            step_index: Index of the step in the pipeline
+
+        Returns:
+            Enhanced step configuration with fine-tuned prompt
+        """
+        if not self.fine_tuning_enabled or not self.prompt_enhancer:
+            return step
+
+        try:
+            step_name = step.get('name', f'step_{step_index + 1}')
+            original_prompt = step.get('prompt', '')
+
+            if not original_prompt:
+                logger.warning(
+                    f"⚠️ No prompt to fine-tune in step: {step_name}")
+                return step
+
+            # Create cache key for this prompt
+            cache_key = self._create_cache_key(original_prompt, step_index)
+
+            # Check cache first
+            cached_result = self._get_cached_fine_tuned_prompt(cache_key)
+            if cached_result:
+                logger.info(
+                    f"🎯 Using cached fine-tuned prompt for step: {step_name}")
+                enhanced_step = step.copy()
+                enhanced_step['prompt'] = cached_result
+                enhanced_step['_fine_tuned'] = True
+                return enhanced_step
+
+            logger.info(f"🔧 Fine-tuning prompt for step: {step_name}")
+
+            # Build context for fine-tuning
+            context_data = self._build_fine_tuning_context(step, step_index)
+
+            # Fine-tune the prompt
+            enhancement_result = self.prompt_enhancer.enhance_prompt(
+                base_prompt=original_prompt,
+                new_prompt=self.fine_tune_prompt,
+                context_data=context_data,
+                enhancement_type="general",
+                temperature=0.3,
+                max_tokens=4000,
+                explain=False  # Don't need explanations for pipeline processing
+            )
+
+            if enhancement_result.get('enhanced_prompt'):
+                enhanced_prompt = enhancement_result['enhanced_prompt']
+
+                # Cache the result
+                self._cache_fine_tuned_prompt(cache_key, enhanced_prompt)
+
+                # Create enhanced step
+                enhanced_step = step.copy()
+                enhanced_step['prompt'] = enhanced_prompt
+                enhanced_step['_fine_tuned'] = True
+                enhanced_step['_original_prompt'] = original_prompt
+
+                logger.info(
+                    f"✅ Successfully fine-tuned prompt for step: {step_name}")
+                return enhanced_step
+            else:
+                logger.warning(
+                    f"⚠️ Fine-tuning failed for step: {step_name}, using original prompt")
+                return step
+
+        except Exception as e:
+            logger.error(f"❌ Error fine-tuning step {step_name}: {str(e)}")
+            return step
+
+    def _build_fine_tuning_context(self, step: Dict[str, Any], step_index: int) -> Dict[str, Any]:
+        """Build context data for fine-tuning based on pipeline state and previous steps"""
+        context = {
+            'pipeline_info': {
+                'name': self.pipeline_context.get('pipeline_name'),
+                'current_step_index': step_index,
+                'step_name': step.get('name'),
+                'step_type': step.get('type')
+            }
+        }
+
+        # Add pipeline context data if available
+        if self.pipeline_context.get('context_data'):
+            context['pipeline_context_data'] = self.pipeline_context['context_data']
+
+        # Add previous step results for context
+        completed_steps = self.pipeline_context.get('completed_steps', [])
+        if completed_steps:
+            context['previous_steps'] = []
+            # Include last 2 steps for context (to avoid token limits)
+            for prev_step in completed_steps[-2:]:
+                step_summary = {
+                    'step_name': prev_step.get('name'),
+                    'step_type': prev_step.get('type'),
+                    'output_summary': str(prev_step.get('output', ''))[:200] + '...' if len(str(prev_step.get('output', ''))) > 200 else str(prev_step.get('output', ''))
+                }
+                context['previous_steps'].append(step_summary)
+
+        # Add schema information if present
+        if step.get('schema'):
+            context['expected_output_schema'] = step['schema']
+
+        return context
+
+    def _create_cache_key(self, prompt: str, step_index: int) -> str:
+        """Create a unique cache key for a prompt and its context"""
+        # Include fine_tune_prompt and step_index in the hash for uniqueness
+        cache_content = f"{prompt}|{self.fine_tune_prompt}|{step_index}"
+        return hashlib.md5(cache_content.encode()).hexdigest()
+
+    def _cache_fine_tuned_prompt(self, cache_key: str, enhanced_prompt: str):
+        """Cache a fine-tuned prompt"""
+        self.fine_tune_cache[cache_key] = enhanced_prompt
+
+    def _get_cached_fine_tuned_prompt(self, cache_key: str) -> Optional[str]:
+        """Retrieve a cached fine-tuned prompt"""
+        return self.fine_tune_cache.get(cache_key)
+
     def _process_pipeline(
         self,
         client,
@@ -65,7 +240,7 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
         context_data: Any = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """Process a multi-step Chain of Thought pipeline"""
+        """Process a multi-step Chain of Thought pipeline with fine-tuning support"""
         try:
             if not steps:
                 return {
@@ -76,6 +251,9 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
 
             logger.info(f"\n=== Processing Pipeline: {pipeline_name} ===")
             logger.info(f"Total steps: {len(steps)}")
+            logger.info(
+                f"Fine-tuning: {'Enabled' if self.fine_tuning_enabled else 'Disabled'}")
+
             # Improved context data logging - check both pipeline and step level
             first_step_context = steps[0].get(
                 'context_data') if steps else None
@@ -98,44 +276,64 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 if i == 0 and context_data is not None:
                     step['context_data'] = context_data
 
+                # NEW: Fine-tune the step prompt if fine-tuning is enabled
+                processed_step = step
+                if self.fine_tuning_enabled:
+                    processed_step = self._fine_tune_step_prompt(step, i)
+                    if processed_step.get('_fine_tuned'):
+                        logger.info(
+                            f"🎯 Using fine-tuned prompt for step: {step_name}")
+
                 # Print step configuration details
                 logger.info(f"\n🚀 Processing step {i+1}/{len(steps)}:")
                 logger.info(f"Name: {step_name}")
                 logger.info(f"Type: {step_type}")
+                if processed_step.get('_fine_tuned'):
+                    logger.info("🔧 Fine-tuned: Yes")
 
                 try:
-                    # Process step based on type
-                    if step.get('messages') or step_type.lower() == 'tonality':
+                    # Process step based on type using the processed (potentially fine-tuned) step
+                    if processed_step.get('messages') or step_type.lower() == 'tonality':
                         step_result = self._process_tonality_step(
-                            client, step, results, temperature, max_tokens)
+                            client, processed_step, results, temperature, max_tokens)
                     elif step_type.lower() in ['initial', 'initialprompt']:
                         step_result = self._process_example_step(
-                            client, step, results, temperature, max_tokens)
+                            client, processed_step, results, temperature, max_tokens)
                     elif step_type.lower() in ['newproblem', 'newquestion']:
                         step_result = self._process_new_problem_step(
-                            client, step, results, temperature, max_tokens)
+                            client, processed_step, results, temperature, max_tokens)
                     elif step_type.lower() in ['followup', 'history']:
                         step_result = self._process_regular_step(
-                            client, step, results, "FOLLOWUP", temperature, max_tokens)
+                            client, processed_step, results, "FOLLOWUP", temperature, max_tokens)
                     elif step_type.lower() in ['verification', 'verify']:
                         step_result = self._process_verification_step(
-                            client, step, results, temperature, max_tokens)
+                            client, processed_step, results, temperature, max_tokens)
                     elif step_type.lower() in ['summary', 'summarize']:
                         step_result = self._process_summary_step(
-                            client, step, results, temperature, max_tokens)
+                            client, processed_step, results, temperature, max_tokens)
                     else:
                         step_result = self._process_regular_step(
-                            client, step, results, "QUESTION", temperature, max_tokens)
+                            client, processed_step, results, "QUESTION", temperature, max_tokens)
                 except Exception as e:
                     step_result = {
                         'success': False,
                         'error': f"Unexpected error processing step: {str(e)}"
                     }
 
-                # Handle step results
+                # Handle step results and update pipeline context
                 if step_result['success']:
-                    output_key = step.get('output_key', f"{step_name}_output")
+                    output_key = processed_step.get(
+                        'output_key', f"{step_name}_output")
                     results[output_key] = step_result['output']
+
+                    # Update pipeline context with completed step
+                    self.pipeline_context['completed_steps'].append({
+                        'name': step_name,
+                        'type': step_type,
+                        'output': step_result['output'],
+                        'fine_tuned': processed_step.get('_fine_tuned', False)
+                    })
+
                     logger.info(f"✅ {step_name} completed successfully")
                 else:
                     error_msg = step_result.get('error', 'Unknown error')
@@ -159,6 +357,9 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 }
 
             logger.info(f"\n✅ Pipeline completed successfully")
+            if self.fine_tuning_enabled:
+                logger.info(
+                    f"🔧 Fine-tuning cache size: {len(self.fine_tune_cache)} entries")
 
             # Get the last step's output key for the final result
             last_output_key = None
@@ -211,6 +412,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'history_messages': self.raw_history if hasattr(self, 'raw_history') else [],
                 'final_output': f"Error: {error_msg}"
             }
+
+    # [All the existing methods remain unchanged - just keeping the important ones for context]
 
     def _format_history(self) -> str:
         """Format the conversation history for display"""
@@ -316,10 +519,6 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing example step: {str(e)}"
             }
 
-
-# This code should replace the existing _process_new_problem_step method in processors/cot_processor.py
-
-
     def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens):
         """Process a new problem step with improved schema handling"""
         from langchain_core.messages import HumanMessage, AIMessage
@@ -387,10 +586,6 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
 
             # Generate response using the client
             if schema:
-                # Determine client type to format schema correctly
-                client_type = getattr(client, "__class__", "").__name__
-
-                # Generate with schema
                 response = client.generate_completion(
                     messages=messages,
                     temperature=step_temperature,
@@ -541,8 +736,6 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing tonality step: {str(e)}"
             }
 
-# This code should replace the existing _process_regular_step method in processors/cot_processor.py
-
     def _process_regular_step(self, client, step, previous_results, step_label="QUESTION", temperature=0, max_tokens=8000):
         """Process a regular follow-up step or question with schema support"""
         from langchain_core.messages import HumanMessage, AIMessage
@@ -674,8 +867,6 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
     def _process_summary_step(self, client, step, previous_results, temperature=0, max_tokens=8000):
         """Process a summary step"""
         return self._process_regular_step(client, step, previous_results, "SUMMARY", temperature, max_tokens)
-
-    # Helper method to extract conclusion from text
 
     def _extract_conclusion(self, text):
         """Extract just the conclusion from a longer text"""
