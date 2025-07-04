@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 import json
 
 from llm_factory.core import LLMClientFactory
+from llm_factory.env_loader import ENV_VARS
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ class PromptEnhancer:
     and incorporating new guidelines or feedback from the user.
     """
 
-    def __init__(self, client=None, client_type: str = "azure", **client_kwargs):
+    def __init__(self, client=None, client_type: str = None, dry_run: bool = False, **client_kwargs):
         """
         Initialize the PromptEnhancer with an optional LLM client.
 
@@ -26,8 +27,9 @@ class PromptEnhancer:
             **client_kwargs: Additional kwargs to pass to the client creation
         """
         self.client = client
-        self.client_type = client_type
+        self.client_type = client_type or ENV_VARS.get('default_client_type', 'azure')
         self.client_kwargs = client_kwargs
+        self.dry_run = dry_run
 
         # Create client if not provided
         if self.client is None:
@@ -112,6 +114,16 @@ class PromptEnhancer:
             Dict with enhanced prompt and explanations
         """
         try:
+            # Check if dry-run mode is enabled
+            if self.dry_run:
+                logger.info("🔍 DRY-RUN MODE: Simulating prompt enhancement")
+                return {
+                    "enhanced_prompt": base_prompt,  # Return original prompt in dry-run
+                    "explanation": "DRY-RUN: Prompt enhancement was simulated, no actual API call made",
+                    "reasoning": f"In dry-run mode, returning original prompt unchanged. Would have enhanced with: {new_prompt[:100]}...",
+                    "dry_run": True
+                }
+            
             # Validate inputs
             if not base_prompt:
                 raise ValueError("Base prompt cannot be empty")
@@ -334,10 +346,11 @@ def enhance_prompt(
     context_data: Any = None,
     enhancement_type: str = "general",
     client=None,
-    client_type: str = "azure",
+    client_type: str = None,
     temperature: float = 0.3,
     max_tokens: int = 4000,
     explain: bool = True,
+    dry_run: bool = False,
     **client_kwargs
 ) -> Dict[str, Any]:
     """
@@ -361,6 +374,7 @@ def enhance_prompt(
     enhancer = PromptEnhancer(
         client=client,
         client_type=client_type,
+        dry_run=dry_run,
         **client_kwargs
     )
 

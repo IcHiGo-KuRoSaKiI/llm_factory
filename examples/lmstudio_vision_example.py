@@ -1,5 +1,5 @@
 
-# examples/lmstudio_vision_example.py
+# examples.lmstudio_vision_example
 import os
 import json
 import logging
@@ -17,6 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def process_image_with_lmstudio(
     image_path: str,
     base_url: str = "http://localhost:1234",
@@ -25,13 +26,13 @@ def process_image_with_lmstudio(
 ) -> str:
     """
     Process an image with LM Studio running a vision-enabled model locally
-    
+
     Args:
         image_path: Path to the image file
         base_url: URL of the LM Studio server
         custom_prompt: Optional custom prompt to use for image analysis
         output_path: Optional path to save the results
-        
+
     Returns:
         Extracted text from the image
     """
@@ -41,25 +42,26 @@ def process_image_with_lmstudio(
             "base_url": base_url,
             "supports_vision": True  # Explicitly state that model supports vision
         }
-        
+
         # Convert image to data URI
         logger.info(f"Converting image to base64: {image_path}")
         image_data_uri = image_to_data_uri(image_path)
-        
+
         if not image_data_uri:
             raise ValueError(f"Failed to encode image: {image_path}")
-        
+
         # Create the client directly
         logger.info("Creating LM Studio client for image processing")
-        client = LLMClientFactory.create_client(client_type="lmstudio", **client_params)
-        
+        client = LLMClientFactory.create_client(
+            client_type="lmstudio", **client_params)
+
         # Process the image
         logger.info("Processing image with LM Studio client")
         extracted_text = client.get_openai_response_image(
             image_data=image_data_uri,
             prompt=custom_prompt
         )
-        
+
         # Save to file if output path provided
         if output_path:
             logger.info(f"Saving results to {output_path}")
@@ -70,21 +72,26 @@ def process_image_with_lmstudio(
                     "extracted_text": extracted_text
                 }
                 json.dump(result, f, indent=2)
-        
+
         return extracted_text
-        
+
     except Exception as e:
         logger.error(f"Error processing image: {str(e)}")
         return f"[Image processing failed: {str(e)}]"
 
+
 if __name__ == "__main__":
     # Setup command line argument parsing
-    parser = argparse.ArgumentParser(description="Process images using LM Studio with vision capabilities")
-    parser.add_argument("--image", required=True, help="Path to the image file to process")
-    parser.add_argument("--server", default="http://localhost:1234", help="LM Studio server URL")
-    parser.add_argument("--output", help="Path to save the output to a JSON file")
+    parser = argparse.ArgumentParser(
+        description="Process images using LM Studio with vision capabilities")
+    parser.add_argument("--image", required=True,
+                        help="Path to the image file to process")
+    parser.add_argument(
+        "--server", default="http://localhost:1234", help="LM Studio server URL")
+    parser.add_argument(
+        "--output", help="Path to save the output to a JSON file")
     args = parser.parse_args()
-    
+
     # Define a custom prompt
     custom_prompt = """
     You are an AI assistant specialized in analyzing business documents and diagrams. 
@@ -92,7 +99,7 @@ if __name__ == "__main__":
     Pay special attention to any tables, charts, or diagrams, and describe their structure and content.
     Ignore any watermarks or background elements that aren't part of the main content.
     """
-    
+
     # Process the image
     result = process_image_with_lmstudio(
         image_path=args.image,
@@ -100,7 +107,7 @@ if __name__ == "__main__":
         custom_prompt=custom_prompt,
         output_path=args.output
     )
-    
+
     # Print the result
     print("\n=== LM Studio Vision Result ===")
     print(result[:500] + "..." if len(result) > 500 else result)

@@ -5,6 +5,17 @@ import hashlib
 from typing import Any, Dict, List, Optional, Union
 
 from .base_processor import BasePromptProcessor
+try:
+    from ..utils.dry_run_logger import create_dry_run_logger
+except ImportError:
+    # Fallback for direct import
+    try:
+        from llm_factory.utils.dry_run_logger import create_dry_run_logger
+    except ImportError:
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../utils'))
+        from dry_run_logger import create_dry_run_logger
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +40,9 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
         self.fine_tune_prompt = None
         self.prompt_enhancer = None
         self.pipeline_context = {}  # Store context from previous steps
+        
+        # Dry-run logging
+        self.dry_run_logger = None
 
     def process(self, client, prompt_config: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """Process a Chain of Thought pipeline with optional fine-tuning"""
@@ -38,9 +52,23 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             steps = prompt_config.get('steps', [])
             context_data = prompt_config.get('context_data')
 
+            # NEW: Extract top-level model configuration
+            top_level_model = prompt_config.get('model')
+            top_level_temperature = prompt_config.get('temperature')
+            top_level_max_tokens = prompt_config.get('max_tokens')
+            dry_run = prompt_config.get('dry_run', False)
+
             # NEW: Check for fine-tuning configuration
             self.fine_tune_prompt = prompt_config.get('fine_tune_prompt')
             self.fine_tuning_enabled = bool(self.fine_tune_prompt)
+            
+            # Initialize dry-run logger if needed (or if fine-tuning is enabled)
+            if dry_run or self.fine_tuning_enabled:
+                self.dry_run_logger = create_dry_run_logger()
+                if dry_run:
+                    logger.info(f"Dry-run mode enabled. Logs will be saved to: {self.dry_run_logger.dry_run_folder}")
+                elif self.fine_tuning_enabled:
+                    logger.info(f"Fine-tuning logging enabled. Logs will be saved to: {self.dry_run_logger.dry_run_folder}")
 
             if self.fine_tuning_enabled:
                 logger.info(
@@ -49,7 +77,7 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     f"Fine-tuning instruction: {self.fine_tune_prompt[:100]}...")
 
                 # Initialize the prompt enhancer
-                self._initialize_prompt_enhancer(client)
+                self._initialize_prompt_enhancer(client, dry_run=dry_run)
             else:
                 logger.info(f"📋 Processing standard pipeline: {pipeline_name}")
 
@@ -67,12 +95,20 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'completed_steps': []
             }
 
+            # Store pipeline info for dry-run logging
+            if dry_run and self.dry_run_logger:
+                self._current_pipeline_name = pipeline_name
+            
             # Process the pipeline
             pipeline_result = self._process_pipeline(
                 client=client,
                 pipeline_name=pipeline_name,
                 steps=steps,
                 context_data=context_data,
+                top_level_model=top_level_model,
+                top_level_temperature=top_level_temperature,
+                top_level_max_tokens=top_level_max_tokens,
+                dry_run=dry_run,
                 **kwargs
             )
 
@@ -82,6 +118,36 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 pipeline_result['fine_tune_instruction'] = self.fine_tune_prompt
                 pipeline_result['cache_hits'] = len(
                     [k for k in self.fine_tune_cache.keys()])
+            
+            # Add pipeline configuration metadata
+            pipeline_result['pipeline_config'] = {
+                'dry_run': dry_run,
+                'top_level_model': top_level_model,
+                'top_level_temperature': top_level_temperature,
+                'top_level_max_tokens': top_level_max_tokens
+            }
+            
+            # Log pipeline summary in dry-run mode
+            if dry_run and self.dry_run_logger:
+                self.dry_run_logger.log_pipeline_summary(
+                    pipeline_name=pipeline_name,
+                    total_steps=len(steps),
+                    pipeline_config=prompt_config,
+                    execution_metadata={
+                        'fine_tuning_enabled': self.fine_tuning_enabled,
+                        'context_data_provided': bool(context_data),
+                        'total_failed_steps': len(pipeline_result.get('failed_steps', [])),
+                        'session_info': self.dry_run_logger.get_session_info()
+                    }
+                )
+                
+                # NEW: Log the complete pipeline result
+                complete_result = {pipeline_name: pipeline_result}
+                self.dry_run_logger.log_pipeline_result(
+                    pipeline_name=pipeline_name,
+                    pipeline_result=complete_result,
+                    pipeline_config=prompt_config
+                )
 
             return {
                 pipeline_name: pipeline_result
@@ -97,11 +163,20 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 }
             }
 
-    def _initialize_prompt_enhancer(self, client):
+    def _initialize_prompt_enhancer(self, client, dry_run=False):
         """Initialize the prompt enhancer for fine-tuning"""
         try:
             from llm_factory.utils import PromptEnhancer
-            self.prompt_enhancer = PromptEnhancer(client=client)
+            from llm_factory.env_loader import ENV_VARS
+            
+            # Use the default client type from environment instead of hardcoded azure
+            default_client_type = ENV_VARS.get('default_client_type', 'azure')
+            
+            self.prompt_enhancer = PromptEnhancer(
+                client=client,
+                client_type=default_client_type,
+                dry_run=dry_run
+            )
             logger.info("✅ Prompt enhancer initialized successfully")
         except Exception as e:
             logger.warning(
@@ -139,6 +214,23 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             if cached_result:
                 logger.info(
                     f"🎯 Using cached fine-tuned prompt for step: {step_name}")
+                
+                # Log the cached fine-tuning process details (always log, regardless of dry-run)
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    self.dry_run_logger.log_fine_tuning_process(
+                        pipeline_name=self.pipeline_context.get('pipeline_name', 'unknown'),
+                        step_name=step_name,
+                        original_prompt=original_prompt,
+                        fine_tuning_guidelines=self.fine_tune_prompt,
+                        enhanced_prompt=cached_result,
+                        enhancement_metadata={
+                            'step_index': step_index,
+                            'cache_hit': True,
+                            'enhancement_type': 'general',
+                            'context_provided': bool(self._build_fine_tuning_context(step, step_index))
+                        }
+                    )
+                
                 enhanced_step = step.copy()
                 enhanced_step['prompt'] = cached_result
                 enhanced_step['_fine_tuned'] = True
@@ -165,6 +257,22 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
 
                 # Cache the result
                 self._cache_fine_tuned_prompt(cache_key, enhanced_prompt)
+                
+                # Log the fine-tuning process details (always log, regardless of dry-run)
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    self.dry_run_logger.log_fine_tuning_process(
+                        pipeline_name=self.pipeline_context.get('pipeline_name', 'unknown'),
+                        step_name=step_name,
+                        original_prompt=original_prompt,
+                        fine_tuning_guidelines=self.fine_tune_prompt,
+                        enhanced_prompt=enhanced_prompt,
+                        enhancement_metadata={
+                            'step_index': step_index,
+                            'cache_hit': False,
+                            'enhancement_type': 'general',
+                            'context_provided': bool(context_data)
+                        }
+                    )
 
                 # Create enhanced step
                 enhanced_step = step.copy()
@@ -238,6 +346,10 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
         pipeline_name: str,
         steps: List[Dict[str, Any]],
         context_data: Any = None,
+        top_level_model: str = None,
+        top_level_temperature: float = None,
+        top_level_max_tokens: int = None,
+        dry_run: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """Process a multi-step Chain of Thought pipeline with fine-tuning support"""
@@ -249,10 +361,18 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     'final_output': None
                 }
 
+            # Get parameters from kwargs with defaults, with top-level overrides
+            temperature = top_level_temperature if top_level_temperature is not None else kwargs.get('temperature', 0)
+            max_tokens = top_level_max_tokens if top_level_max_tokens is not None else kwargs.get('max_tokens', 8000)
+            model = top_level_model if top_level_model is not None else getattr(client, 'model_name', None)
             logger.info(f"\n=== Processing Pipeline: {pipeline_name} ===")
             logger.info(f"Total steps: {len(steps)}")
             logger.info(
                 f"Fine-tuning: {'Enabled' if self.fine_tuning_enabled else 'Disabled'}")
+            logger.info(f"Dry run: {'Enabled' if dry_run else 'Disabled'}")
+            logger.info(f"Model: {model if model else 'Default'}")
+            logger.info(f"Temperature: {temperature}")
+            logger.info(f"Max tokens: {max_tokens}")
 
             # Improved context data logging - check both pipeline and step level
             first_step_context = steps[0].get(
@@ -264,13 +384,14 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             results = {}
             failed_steps = []
 
-            # Get parameters from kwargs with defaults
-            temperature = kwargs.get('temperature', 0)
-            max_tokens = kwargs.get('max_tokens', 8000)
 
             for i, step in enumerate(steps):
                 step_name = step.get('name', f"step_{i+1}")
                 step_type = step.get('type', 'unknown')
+                
+                # Store current step index for dry-run logging
+                if dry_run and self.dry_run_logger:
+                    self._current_step_index = i
 
                 # Add context to first step if provided
                 if i == 0 and context_data is not None:
@@ -292,28 +413,42 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     logger.info("🔧 Fine-tuned: Yes")
 
                 try:
+                    # Get step-level parameters with fallbacks
+                    step_model = processed_step.get('model', model)
+                    step_temperature = processed_step.get('temperature', temperature)
+                    step_max_tokens = processed_step.get('max_tokens', max_tokens)
+                    step_exclude_from_history = processed_step.get('exclude_from_chat_history', False)
+                    step_exclude_context = processed_step.get('exclude_context', False)
+                    
                     # Process step based on type using the processed (potentially fine-tuned) step
                     if processed_step.get('messages') or step_type.lower() == 'tonality':
                         step_result = self._process_tonality_step(
-                            client, processed_step, results, temperature, max_tokens)
+                            client, processed_step, results, step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                     elif step_type.lower() in ['initial', 'initialprompt']:
                         step_result = self._process_example_step(
-                            client, processed_step, results, temperature, max_tokens)
+                            client, processed_step, results, step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                     elif step_type.lower() in ['newproblem', 'newquestion']:
                         step_result = self._process_new_problem_step(
-                            client, processed_step, results, temperature, max_tokens)
+                            client, processed_step, results, step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                     elif step_type.lower() in ['followup', 'history']:
                         step_result = self._process_regular_step(
-                            client, processed_step, results, "FOLLOWUP", temperature, max_tokens)
+                            client, processed_step, results, "FOLLOWUP", step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                     elif step_type.lower() in ['verification', 'verify']:
                         step_result = self._process_verification_step(
-                            client, processed_step, results, temperature, max_tokens)
+                            client, processed_step, results, step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                     elif step_type.lower() in ['summary', 'summarize']:
                         step_result = self._process_summary_step(
-                            client, processed_step, results, temperature, max_tokens)
+                            client, processed_step, results, step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                     else:
                         step_result = self._process_regular_step(
-                            client, processed_step, results, "QUESTION", temperature, max_tokens)
+                            client, processed_step, results, "QUESTION", step_temperature, step_max_tokens,
+                            step_model, step_exclude_from_history, step_exclude_context, dry_run)
                 except Exception as e:
                     step_result = {
                         'success': False,
@@ -433,7 +568,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
 
         return formatted
 
-    def _process_example_step(self, client, step, previous_results, temperature, max_tokens):
+    def _process_example_step(self, client, step, previous_results, temperature, max_tokens, 
+                             model=None, exclude_from_history=False, exclude_context=False, dry_run=False):
         """Process a step that establishes a pattern with examples (with schema support)"""
         from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
         try:
@@ -456,7 +592,7 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             ))
 
             user_content = "### EXAMPLES OF REASONING PATTERN:\n\n" + prompt_text
-            if context_data:
+            if context_data and not exclude_context:
                 context_str = context_data if isinstance(
                     context_data, str) else json.dumps(context_data, indent=2)
                 user_content += f"\n\n### CONTEXT DATA TO USE:\n\n{context_str}"
@@ -471,42 +607,97 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
 
             user_msg = HumanMessage(content=user_content)
 
-            self.message_history.append(system_msg)
-            self.message_history.append(user_msg)
+            # Only add to history if not excluded
+            if not exclude_from_history:
+                self.message_history.append(system_msg)
+                self.message_history.append(user_msg)
 
-            self.raw_history.extend([
-                {'role': 'system', 'content': system_msg.content},
-                {'role': 'user', 'content': user_msg.content}
-            ])
+                self.raw_history.extend([
+                    {'role': 'system', 'content': system_msg.content},
+                    {'role': 'user', 'content': user_msg.content}
+                ])
 
             messages = [
                 {"role": "system", "content": system_msg.content},
                 {"role": "user", "content": user_msg.content}
             ]
 
-            if schema:
-                ai_response = client.generate_completion(
-                    messages=messages,
-                    temperature=step_temperature,
-                    max_tokens=step_max_tokens,
-                    response_format={
-                        "type": "json_schema", "json_schema": schema}
-                )
+            # Handle dry run mode
+            if dry_run:
+                logger.info(f"\n=== DRY RUN - Step Payload ===")
+                logger.info(f"Model: {model or 'default'}")
+                logger.info(f"Temperature: {step_temperature}")
+                logger.info(f"Max tokens: {step_max_tokens}")
+                logger.info(f"Messages: {json.dumps(messages, indent=2)}")
+                logger.info(f"Schema: {json.dumps(schema, indent=2) if schema else 'None'}")
+                logger.info(f"Exclude from history: {exclude_from_history}")
+                logger.info(f"Exclude context: {exclude_context}")
+                logger.info(f"=== END DRY RUN ===")
+                
+                # Log to file if logger is available
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    request_data = {
+                        "model": model or 'default',
+                        "temperature": step_temperature,
+                        "max_tokens": step_max_tokens,
+                        "messages": messages,
+                        "response_format": {"type": "json_schema", "json_schema": schema} if schema else None
+                    }
+                    
+                    metadata = {
+                        "exclude_from_history": exclude_from_history,
+                        "exclude_context": exclude_context,
+                        "context_data_included": not exclude_context and bool(context_data),
+                        "step_index": getattr(self, '_current_step_index', 0),
+                        "fine_tuned": step.get('_fine_tuned', False)
+                    }
+                    
+                    self.dry_run_logger.log_request(
+                        pipeline_name=getattr(self, '_current_pipeline_name', 'unknown'),
+                        step_name=step.get('name', 'unknown_step'),
+                        step_type=step.get('type', 'example_step'),
+                        request_data=request_data,
+                        metadata=metadata
+                    )
+                
+                # Return mock response for dry run
+                ai_response = {"dry_run": True, "message": "This is a dry run response"}
             else:
-                ai_response = client.generate_completion(
-                    messages=messages,
-                    temperature=step_temperature,
-                    max_tokens=step_max_tokens
-                )
+                # Prepare client parameters
+                client_params = {
+                    "messages": messages,
+                    "temperature": step_temperature,
+                    "max_tokens": step_max_tokens
+                }
+                
+                # Add model if specified
+                if model and hasattr(client, 'model_name'):
+                    # Temporarily update client model for this request
+                    original_model = client.model_name
+                    client.model_name = model
+                    
+                if schema:
+                    client_params["response_format"] = {
+                        "type": "json_schema", "json_schema": schema
+                    }
+                
+                ai_response = client.generate_completion(**client_params)
+                
+                # Restore original model
+                if model and hasattr(client, 'model_name'):
+                    client.model_name = original_model
 
             ai_msg = AIMessage(content=str(ai_response) if isinstance(
                 ai_response, dict) else ai_response)
-            self.message_history.append(ai_msg)
+            
+            # Only add to history if not excluded
+            if not exclude_from_history:
+                self.message_history.append(ai_msg)
 
-            self.raw_history.append({
-                'role': 'assistant',
-                'content': ai_response if isinstance(ai_response, str) else json.dumps(ai_response, indent=2)
-            })
+                self.raw_history.append({
+                    'role': 'assistant',
+                    'content': ai_response if isinstance(ai_response, str) else json.dumps(ai_response, indent=2)
+                })
 
             return {
                 'success': True,
@@ -519,7 +710,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing example step: {str(e)}"
             }
 
-    def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens):
+    def _process_new_problem_step(self, client, step, previous_results, temperature, max_tokens,
+                                 model=None, exclude_from_history=False, exclude_context=False, dry_run=False):
         """Process a new problem step with improved schema handling"""
         from langchain_core.messages import HumanMessage, AIMessage
         try:
@@ -547,8 +739,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             if "previous analysis" not in prompt_text.lower():
                 prompt_text = f"Continue the analysis based on the previous conclusion. Be concise.\n\n{prompt_text}"
 
-            # Add context data if provided
-            if context_data:
+            # Add context data if provided and not excluded
+            if context_data and not exclude_context:
                 context_str = context_data if isinstance(
                     context_data, str) else json.dumps(context_data, indent=2)
                 prompt_text = f"Context Data:\n```\n{context_str}\n```\n\n{prompt_text}"
@@ -567,11 +759,12 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 prompt_text += f"\n\nYou MUST format your response as a valid JSON object that conforms to the following schema:\n```json\n{schema_str}\n```\n"
                 prompt_text += "Important: Your response must be a properly formatted JSON object without any additional text, markdown, or explanation."
 
-            # Create and add user message to history
+            # Create and add user message to history (if not excluded)
             user_msg = HumanMessage(content=prompt_text)
-            self.message_history.append(user_msg)
-            self.raw_history.append(
-                {'role': 'user', 'content': user_msg.content})
+            if not exclude_from_history:
+                self.message_history.append(user_msg)
+                self.raw_history.append(
+                    {'role': 'user', 'content': user_msg.content})
 
             # Convert message history to API format
             messages = []
@@ -584,42 +777,92 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 else:
                     messages.append({"role": "system", "content": msg.content})
 
-            # Generate response using the client
-            if schema:
-                response = client.generate_completion(
-                    messages=messages,
-                    temperature=step_temperature,
-                    max_tokens=step_max_tokens,
-                    response_format={
-                        "type": "json_schema", "json_schema": schema}
-                )
+            # Handle dry run mode
+            if dry_run:
+                logger.info(f"\n=== DRY RUN - Step Payload ===")
+                logger.info(f"Model: {model or 'default'}")
+                logger.info(f"Temperature: {step_temperature}")
+                logger.info(f"Max tokens: {step_max_tokens}")
+                logger.info(f"Messages: {json.dumps(messages, indent=2)}")
+                logger.info(f"Schema: {json.dumps(schema, indent=2) if schema else 'None'}")
+                logger.info(f"Exclude from history: {exclude_from_history}")
+                logger.info(f"Exclude context: {exclude_context}")
+                logger.info(f"=== END DRY RUN ===")
+                
+                # Log to file if logger is available
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    request_data = {
+                        "model": model or 'default',
+                        "temperature": step_temperature,
+                        "max_tokens": step_max_tokens,
+                        "messages": messages,
+                        "response_format": {"type": "json_schema", "json_schema": schema} if schema else None
+                    }
+                    
+                    metadata = {
+                        "exclude_from_history": exclude_from_history,
+                        "exclude_context": exclude_context,
+                        "context_data_included": not exclude_context and bool(context_data),
+                        "step_index": getattr(self, '_current_step_index', 0),
+                        "fine_tuned": step.get('_fine_tuned', False)
+                    }
+                    
+                    self.dry_run_logger.log_request(
+                        pipeline_name=getattr(self, '_current_pipeline_name', 'unknown'),
+                        step_name=step.get('name', 'unknown_step'),
+                        step_type=step.get('type', 'new_problem_step'),
+                        request_data=request_data,
+                        metadata=metadata
+                    )
+                
+                response = {"dry_run": True, "message": "This is a dry run response"}
                 structured_output = response
             else:
-                # Standard text generation
-                response = client.generate_completion(
-                    messages=messages,
-                    temperature=step_temperature,
-                    max_tokens=step_max_tokens
-                )
+                # Prepare client parameters
+                client_params = {
+                    "messages": messages,
+                    "temperature": step_temperature,
+                    "max_tokens": step_max_tokens
+                }
+                
+                # Add model if specified
+                if model and hasattr(client, 'model_name'):
+                    original_model = client.model_name
+                    client.model_name = model
+                
+                # Generate response using the client
+                if schema:
+                    client_params["response_format"] = {
+                        "type": "json_schema", "json_schema": schema
+                    }
+                
+                response = client.generate_completion(**client_params)
                 structured_output = response
+                
+                # Restore original model
+                if model and hasattr(client, 'model_name'):
+                    client.model_name = original_model
 
-            # Add AI response to history
+            # Add AI response to history (if not excluded)
             ai_msg = AIMessage(content=str(response) if isinstance(
                 response, dict) else response)
-            self.message_history.append(ai_msg)
+            
+            if not exclude_from_history:
+                self.message_history.append(ai_msg)
 
-            # Use the actual content for the raw history
-            self.raw_history.append({
-                'role': 'assistant',
-                'content': response if isinstance(response, str) else json.dumps(response, indent=2)
-            })
+                # Use the actual content for the raw history
+                self.raw_history.append({
+                    'role': 'assistant',
+                    'content': response if isinstance(response, str) else json.dumps(response, indent=2)
+                })
 
             return {'success': True, 'output': structured_output}
 
         except Exception as e:
             return {'success': False, 'error': f"Error processing new problem step: {str(e)}"}
 
-    def _process_tonality_step(self, client, step, previous_results, temperature, max_tokens):
+    def _process_tonality_step(self, client, step, previous_results, temperature, max_tokens,
+                              model=None, exclude_from_history=False, exclude_context=False, dry_run=False):
         """Process a tonality step"""
         try:
             # Get step parameters
@@ -679,9 +922,9 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     "content": prompt_text
                 })
 
-            # Add context data to the user message if available
+            # Add context data to the user message if available and not excluded
             user_content = f"Convert the following drug information to a standardized list:\n{input_str}"
-            if context_data:
+            if context_data and not exclude_context:
                 if isinstance(context_data, str):
                     context_str = context_data
                 else:
@@ -700,30 +943,82 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 "content": user_content
             })
 
-            # Generate response using the client
-            ai_response = client.generate_completion(
-                messages=api_messages,
-                temperature=step_temperature,
-                max_tokens=step_max_tokens
-            )
+            # Handle dry run mode
+            if dry_run:
+                logger.info(f"\n=== DRY RUN - Tonality Step Payload ===")
+                logger.info(f"Model: {model or 'default'}")
+                logger.info(f"Temperature: {step_temperature}")
+                logger.info(f"Max tokens: {step_max_tokens}")
+                logger.info(f"Messages: {json.dumps(api_messages, indent=2)}")
+                logger.info(f"Exclude from history: {exclude_from_history}")
+                logger.info(f"Exclude context: {exclude_context}")
+                logger.info(f"=== END DRY RUN ===")
+                
+                # Log to file if logger is available
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    request_data = {
+                        "model": model or 'default',
+                        "temperature": step_temperature,
+                        "max_tokens": step_max_tokens,
+                        "messages": api_messages
+                    }
+                    
+                    metadata = {
+                        "exclude_from_history": exclude_from_history,
+                        "exclude_context": exclude_context,
+                        "context_data_included": not exclude_context and bool(context_data),
+                        "step_index": getattr(self, '_current_step_index', 0),
+                        "fine_tuned": step.get('_fine_tuned', False),
+                        "input_key": step.get('input_key')
+                    }
+                    
+                    self.dry_run_logger.log_request(
+                        pipeline_name=getattr(self, '_current_pipeline_name', 'unknown'),
+                        step_name=step.get('name', 'unknown_step'),
+                        step_type=step.get('type', 'tonality_step'),
+                        request_data=request_data,
+                        metadata=metadata
+                    )
+                
+                ai_response = "This is a dry run tonality response"
+            else:
+                # Prepare client parameters
+                client_params = {
+                    "messages": api_messages,
+                    "temperature": step_temperature,
+                    "max_tokens": step_max_tokens
+                }
+                
+                # Add model if specified
+                if model and hasattr(client, 'model_name'):
+                    original_model = client.model_name
+                    client.model_name = model
+                
+                # Generate response using the client
+                ai_response = client.generate_completion(**client_params)
+                
+                # Restore original model
+                if model and hasattr(client, 'model_name'):
+                    client.model_name = original_model
 
-            # Add a simplified version to history to maintain continuity
-            from langchain_core.messages import HumanMessage, AIMessage
-            history_user_msg = HumanMessage(
-                content="Please format the previous information according to our style guidelines.")
-            self.message_history.append(history_user_msg)
-            ai_msg = AIMessage(content=ai_response)
-            self.message_history.append(ai_msg)
+            # Add a simplified version to history to maintain continuity (if not excluded)
+            if not exclude_from_history:
+                from langchain_core.messages import HumanMessage, AIMessage
+                history_user_msg = HumanMessage(
+                    content="Please format the previous information according to our style guidelines.")
+                self.message_history.append(history_user_msg)
+                ai_msg = AIMessage(content=ai_response)
+                self.message_history.append(ai_msg)
 
-            # Track in raw history
-            self.raw_history.append({
-                'role': 'user',
-                'content': history_user_msg.content
-            })
-            self.raw_history.append({
-                'role': 'assistant',
-                'content': ai_response
-            })
+                # Track in raw history
+                self.raw_history.append({
+                    'role': 'user',
+                    'content': history_user_msg.content
+                })
+                self.raw_history.append({
+                    'role': 'assistant',
+                    'content': ai_response
+                })
 
             return {
                 'success': True,
@@ -736,7 +1031,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing tonality step: {str(e)}"
             }
 
-    def _process_regular_step(self, client, step, previous_results, step_label="QUESTION", temperature=0, max_tokens=8000):
+    def _process_regular_step(self, client, step, previous_results, step_label="QUESTION", temperature=0, max_tokens=8000,
+                             model=None, exclude_from_history=False, exclude_context=False, dry_run=False):
         """Process a regular follow-up step or question with schema support"""
         from langchain_core.messages import HumanMessage, AIMessage
 
@@ -772,8 +1068,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                     f"{prompt_text}"
                 )
 
-            # Add context data to the prompt if available
-            if context_data:
+            # Add context data to the prompt if available and not excluded
+            if context_data and not exclude_context:
                 if isinstance(context_data, str):
                     context_str = context_data
                 else:
@@ -800,14 +1096,15 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
             user_msg = HumanMessage(content=f"### {step_label}:\n\n" + modified_prompt
                                     )
 
-            # Add message to history
-            self.message_history.append(user_msg)
+            # Add message to history (if not excluded)
+            if not exclude_from_history:
+                self.message_history.append(user_msg)
 
-            # Track raw history for debugging
-            self.raw_history.append({
-                'role': 'user',
-                'content': user_msg.content
-            })
+                # Track raw history for debugging
+                self.raw_history.append({
+                    'role': 'user',
+                    'content': user_msg.content
+                })
 
             # Convert the message history to a format the client can use
             messages = []
@@ -820,34 +1117,82 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 else:
                     messages.append({"role": "system", "content": msg.content})
 
-            # Generate response using the client
-            if schema:
-                # Use schema for structured output
-                ai_response = client.generate_completion(
-                    messages=messages,
-                    temperature=step_temperature,
-                    max_tokens=step_max_tokens,
-                    response_format={
-                        "type": "json_schema", "json_schema": schema}
-                )
+            # Handle dry run mode
+            if dry_run:
+                logger.info(f"\n=== DRY RUN - Step Payload ===")
+                logger.info(f"Model: {model or 'default'}")
+                logger.info(f"Temperature: {step_temperature}")
+                logger.info(f"Max tokens: {step_max_tokens}")
+                logger.info(f"Messages: {json.dumps(messages, indent=2)}")
+                logger.info(f"Schema: {json.dumps(schema, indent=2) if schema else 'None'}")
+                logger.info(f"Exclude from history: {exclude_from_history}")
+                logger.info(f"Exclude context: {exclude_context}")
+                logger.info(f"=== END DRY RUN ===")
+                
+                # Log to file if logger is available
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    request_data = {
+                        "model": model or 'default',
+                        "temperature": step_temperature,
+                        "max_tokens": step_max_tokens,
+                        "messages": messages,
+                        "response_format": {"type": "json_schema", "json_schema": schema} if schema else None
+                    }
+                    
+                    metadata = {
+                        "exclude_from_history": exclude_from_history,
+                        "exclude_context": exclude_context,
+                        "context_data_included": not exclude_context and bool(context_data),
+                        "step_index": getattr(self, '_current_step_index', 0),
+                        "fine_tuned": step.get('_fine_tuned', False)
+                    }
+                    
+                    self.dry_run_logger.log_request(
+                        pipeline_name=getattr(self, '_current_pipeline_name', 'unknown'),
+                        step_name=step.get('name', 'unknown_step'),
+                        step_type=step.get('type', 'regular_step'),
+                        request_data=request_data,
+                        metadata=metadata
+                    )
+                
+                ai_response = {"dry_run": True, "message": "This is a dry run response"}
             else:
-                # Standard text generation
-                ai_response = client.generate_completion(
-                    messages=messages,
-                    temperature=step_temperature,
-                    max_tokens=step_max_tokens
-                )
+                # Prepare client parameters
+                client_params = {
+                    "messages": messages,
+                    "temperature": step_temperature,
+                    "max_tokens": step_max_tokens
+                }
+                
+                # Add model if specified
+                if model and hasattr(client, 'model_name'):
+                    original_model = client.model_name
+                    client.model_name = model
+                
+                # Generate response using the client
+                if schema:
+                    client_params["response_format"] = {
+                        "type": "json_schema", "json_schema": schema
+                    }
+                
+                ai_response = client.generate_completion(**client_params)
+                
+                # Restore original model
+                if model and hasattr(client, 'model_name'):
+                    client.model_name = original_model
 
-            # Add AI response to history
+            # Add AI response to history (if not excluded)
             ai_msg = AIMessage(content=str(ai_response) if isinstance(
                 ai_response, dict) else ai_response)
-            self.message_history.append(ai_msg)
+            
+            if not exclude_from_history:
+                self.message_history.append(ai_msg)
 
-            # Track raw history for debugging - use the actual response
-            self.raw_history.append({
-                'role': 'assistant',
-                'content': ai_response if isinstance(ai_response, str) else json.dumps(ai_response, indent=2)
-            })
+                # Track raw history for debugging - use the actual response
+                self.raw_history.append({
+                    'role': 'assistant',
+                    'content': ai_response if isinstance(ai_response, str) else json.dumps(ai_response, indent=2)
+                })
 
             return {
                 'success': True,
@@ -860,13 +1205,17 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 'error': f"Error processing {step_label.lower()} step: {str(e)}"
             }
 
-    def _process_verification_step(self, client, step, previous_results, temperature=0, max_tokens=8000):
+    def _process_verification_step(self, client, step, previous_results, temperature=0, max_tokens=8000,
+                                  model=None, exclude_from_history=False, exclude_context=False, dry_run=False):
         """Process a verification step"""
-        return self._process_regular_step(client, step, previous_results, "VERIFICATION CHECK", temperature, max_tokens)
+        return self._process_regular_step(client, step, previous_results, "VERIFICATION CHECK", temperature, max_tokens,
+                                        model, exclude_from_history, exclude_context, dry_run)
 
-    def _process_summary_step(self, client, step, previous_results, temperature=0, max_tokens=8000):
+    def _process_summary_step(self, client, step, previous_results, temperature=0, max_tokens=8000,
+                             model=None, exclude_from_history=False, exclude_context=False, dry_run=False):
         """Process a summary step"""
-        return self._process_regular_step(client, step, previous_results, "SUMMARY", temperature, max_tokens)
+        return self._process_regular_step(client, step, previous_results, "SUMMARY", temperature, max_tokens,
+                                        model, exclude_from_history, exclude_context, dry_run)
 
     def _extract_conclusion(self, text):
         """Extract just the conclusion from a longer text"""

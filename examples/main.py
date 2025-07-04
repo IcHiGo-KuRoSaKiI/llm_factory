@@ -1,4 +1,4 @@
-# main.py
+# python - m examples.main
 from llm_factory import run_pipeline
 import os
 import json
@@ -107,73 +107,77 @@ def run_local_model(text_input, base_url=None, temperature=0.7, max_tokens=2000)
 def example_usage():
     """Examples of using the factory pattern"""
 
-    # Example 1: Standard extraction without schema
-    print("\n=== Example 1: Standard Extraction (No Schema) ===")
-    standard_result = run_standard_extraction(
-        input_text="Patient takes Lisinopril 10mg once daily and Metformin 500mg twice daily.",
-        client_type="azure",
-        temperature=0
-    )
-    print("Standard Extraction Result (No Schema):",
-          json.dumps(standard_result, indent=2))
+    # # Example 1: Standard extraction without schema
+    # print("\n=== Example 1: Standard Extraction (No Schema) ===")
+    # standard_result = run_standard_extraction(
+    #     input_text="Patient takes Lisinopril 10mg once daily and Metformin 500mg twice daily.",
+    #     client_type="lmstudio",
+    #     temperature=0
+    # )
+    # print("Standard Extraction Result (No Schema):",
+    #       json.dumps(standard_result, indent=2))
 
-    # Example 2: Standard extraction with schema
-    print("\n=== Example 2: Standard Extraction (With Schema) ===")
+    # # Example 2: Standard extraction with schema
+    # print("\n=== Example 2: Standard Extraction (With Schema) ===")
 
-    # Define a simple schema for medication extraction
-    medication_schema = {
-        "type": "object",
-        "properties": {
-            "medications": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "dosage": {"type": "string"},
-                        "frequency": {"type": "string"}
-                    },
-                    "required": ["name", "dosage", "frequency"]
-                }
-            }
-        },
-        "required": ["medications"]
-    }
+    # # Define a simple schema for medication extraction
+    # medication_schema = {
+    #     "type": "object",
+    #     "properties": {
+    #         "medications": {
+    #             "type": "array",
+    #             "items": {
+    #                 "type": "object",
+    #                 "properties": {
+    #                     "name": {"type": "string"},
+    #                     "dosage": {"type": "string"},
+    #                     "frequency": {"type": "string"}
+    #                 },
+    #                 "required": ["name", "dosage", "frequency"]
+    #             }
+    #         }
+    #     },
+    #     "required": ["medications"]
+    # }
 
-    schema_result = run_standard_extraction(
-        input_text="Patient takes Lisinopril 10mg once daily and Metformin 500mg twice daily.",
-        client_type="azure",
-        temperature=0,
-        schema=medication_schema
-    )
-    print("Standard Extraction Result (With Schema):",
-          json.dumps(schema_result, indent=2))
+    # schema_result = run_standard_extraction(
+    #     input_text="Patient takes Lisinopril 10mg once daily and Metformin 500mg twice daily.",
+    #     client_type="lmstudio",
+    #     temperature=0,
+    #     schema=medication_schema
+    # )
+    # print("Standard Extraction Result (With Schema):",
+    #       json.dumps(schema_result, indent=2))
 
     # Example 3: Chain of Thought pipeline
     print("\n=== Example 3: Chain of Thought Pipeline ===")
 
     cot_config = {
         "name": "problem_solver",
+        "dry_run": True,
         "steps": [
             {
                 "type": "initialPrompt",
                 "name": "understand_problem",
                 "prompt": "Analyze this math problem step by step: If x + y = 10 and x * y = 21, what are x and y?",
-                "output_key": "problem_analysis"
+                "output_key": "problem_analysis",
+                "exclude_context": True
             },
             {
                 "type": "newQuestion",
                 "name": "solve_problem",
                 "prompt": "Now solve the problem using algebraic methods.",
                 "input_key": "problem_analysis",
-                "output_key": "solution"
+                "output_key": "solution",
             }
-        ]
+        ],
+        "context_data": {
+            "additional_info": "This is a simple algebra problem involving two variables."}
     }
 
     cot_result = run_cot_pipeline(
         pipeline_config=cot_config,
-        client_type="azure",
+        client_type="lmstudio",
         temperature=0
     )
 

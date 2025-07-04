@@ -4,6 +4,17 @@ import logging
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 from .base_processor import BasePromptProcessor
+try:
+    from ..utils.dry_run_logger import create_dry_run_logger
+except ImportError:
+    # Fallback for direct import
+    try:
+        from llm_factory.utils.dry_run_logger import create_dry_run_logger
+    except ImportError:
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../utils'))
+        from dry_run_logger import create_dry_run_logger
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +24,10 @@ class StandardPromptProcessor(BasePromptProcessor):
     Processor for standard prompts with JSON extraction and optional tonality matching.
     Handles traditional extraction + tonality workflow.
     """
+    
+    def __init__(self):
+        """Initialize the Standard processor with dry-run logging capabilities"""
+        self.dry_run_logger = None
 
     def process(self, client, prompt_config: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
@@ -26,6 +41,12 @@ class StandardPromptProcessor(BasePromptProcessor):
                 - schema: JSON schema (Optional)
                 - tonality_messages: Base tonality matching messages (Optional)
                 - context_data: Context data related to this extraction
+                - model: Model name (Optional, top-level)
+                - temperature: Temperature parameter (Optional, top-level)
+                - max_tokens: Max tokens parameter (Optional, top-level)
+                - dry_run: Enable dry-run mode (Optional)
+                - exclude_from_chat_history: Exclude from chat history (Optional)
+                - exclude_context: Exclude context data (Optional)
             **kwargs: Additional parameters for the LLM client
 
         Returns:
@@ -48,9 +69,23 @@ class StandardPromptProcessor(BasePromptProcessor):
                 tonality_messages = prompt_config.get('tonality_messages')
                 context_data = prompt_config.get('context_data')
 
-                # Get runtime params with defaults from kwargs
-                temperature = kwargs.get('temperature', 0)
-                max_tokens = kwargs.get('max_tokens', 8000)
+                # NEW: Extract top-level configuration
+                top_level_model = prompt_config.get('model')
+                top_level_temperature = prompt_config.get('temperature')
+                top_level_max_tokens = prompt_config.get('max_tokens')
+                dry_run = prompt_config.get('dry_run', False)
+                exclude_from_history = prompt_config.get('exclude_from_chat_history', False)
+                exclude_context = prompt_config.get('exclude_context', False)
+
+                # Get runtime params with defaults from kwargs, with top-level overrides
+                temperature = top_level_temperature if top_level_temperature is not None else kwargs.get('temperature', 0)
+                max_tokens = top_level_max_tokens if top_level_max_tokens is not None else kwargs.get('max_tokens', 8000)
+                model = top_level_model if top_level_model is not None else getattr(client, 'model_name', None)
+                
+                # Initialize dry-run logger if needed
+                if dry_run:
+                    self.dry_run_logger = create_dry_run_logger()
+                    logger.info(f"Dry-run mode enabled. Logs will be saved to: {self.dry_run_logger.dry_run_folder}")
 
                 # Validate required inputs
                 if not prompt:
@@ -73,6 +108,10 @@ class StandardPromptProcessor(BasePromptProcessor):
                     tonality_messages=tonality_messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    model=model,
+                    exclude_from_history=exclude_from_history,
+                    exclude_context=exclude_context,
+                    dry_run=dry_run,
                     subsection_name=name,
                     conversation_id=conversation_id,
                     **filtered_kwargs
@@ -91,6 +130,37 @@ class StandardPromptProcessor(BasePromptProcessor):
                 if tonality_messages and len(tonality_messages) > 0:
                     result[name]['tonality_messages'] = tonality_msgs
                     result[name]['tonality_result'] = tonality_result
+                
+                # Add configuration metadata
+                result[name]['config_metadata'] = {
+                    'model': model,
+                    'temperature': temperature,
+                    'max_tokens': max_tokens,
+                    'dry_run': dry_run,
+                    'exclude_from_history': exclude_from_history,
+                    'exclude_context': exclude_context
+                }
+                
+                # Log summary in dry-run mode
+                if dry_run and self.dry_run_logger:
+                    self.dry_run_logger.log_pipeline_summary(
+                        pipeline_name=name,
+                        total_steps=1,  # Standard processor has 1 logical step
+                        pipeline_config=prompt_config,
+                        execution_metadata={
+                            'has_schema': bool(schema),
+                            'has_tonality': bool(tonality_messages),
+                            'context_data_provided': bool(context_data),
+                            'session_info': self.dry_run_logger.get_session_info()
+                        }
+                    )
+                    
+                    # NEW: Log the complete pipeline result
+                    self.dry_run_logger.log_pipeline_result(
+                        pipeline_name=name,
+                        pipeline_result=result,
+                        pipeline_config=prompt_config
+                    )
 
                 return result
 
@@ -155,6 +225,14 @@ class StandardPromptProcessor(BasePromptProcessor):
                 filtered_kwargs = {k: v for k, v in kwargs.items() if k not in [
                     'temperature', 'max_tokens']}
 
+                # Extract step-level configuration with fallbacks
+                step_model = config.get('model')
+                step_temperature = config.get('temperature', temperature)
+                step_max_tokens = config.get('max_tokens', max_tokens)
+                step_exclude_from_history = config.get('exclude_from_chat_history', False)
+                step_exclude_context = config.get('exclude_context', False)
+                step_dry_run = config.get('dry_run', False)
+                
                 # Process extraction and tonality with conversation history
                 json_result, tonality_messages, tonality_result = self._process_extraction_with_tonality(
                     client=client,
@@ -162,10 +240,14 @@ class StandardPromptProcessor(BasePromptProcessor):
                     json_schema=config.get('schema', None),
                     tonality_messages=config.get('tonality_messages', None),
                     context_data=context_data,
+                    model=step_model,
+                    exclude_from_history=step_exclude_from_history,
+                    exclude_context=step_exclude_context,
+                    dry_run=step_dry_run,
                     subsection_name=subsection_name,
                     conversation_id=conversation_id,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+                    temperature=step_temperature,
+                    max_tokens=step_max_tokens,
                     **filtered_kwargs
                 )
 
@@ -201,6 +283,10 @@ class StandardPromptProcessor(BasePromptProcessor):
         tonality_messages: List[Dict[str, str]] = None,
         temperature: float = 0,
         max_tokens: int = 8000,
+        model: str = None,
+        exclude_from_history: bool = False,
+        exclude_context: bool = False,
+        dry_run: bool = False,
         subsection_name: str = "Unknown",
         conversation_id: Optional[str] = None,
         **kwargs
@@ -231,9 +317,15 @@ class StandardPromptProcessor(BasePromptProcessor):
 
             # Step 1: JSON Extraction
             logger.info(f"Running JSON extraction for '{subsection_name}'")
+            logger.info(f"Model: {model if model else 'default'}")
+            logger.info(f"Temperature: {temperature}")
+            logger.info(f"Max tokens: {max_tokens}")
+            logger.info(f"Dry run: {'Enabled' if dry_run else 'Disabled'}")
+            logger.info(f"Exclude from history: {exclude_from_history}")
+            logger.info(f"Exclude context: {exclude_context}")
 
-            # Format context data as string if needed
-            if context_data is not None:
+            # Format context data as string if needed and not excluded
+            if context_data is not None and not exclude_context:
                 if not isinstance(context_data, str):
                     context_str = json.dumps(context_data)
                 else:
@@ -255,7 +347,7 @@ class StandardPromptProcessor(BasePromptProcessor):
                 extraction_messages = [
                     extraction_system_msg, extraction_user_msg]
             else:
-                # If no context data, use the prompt directly
+                # If no context data or context excluded, use the prompt directly
                 extraction_messages = [
                     {
                         "role": "system",
@@ -263,27 +355,89 @@ class StandardPromptProcessor(BasePromptProcessor):
                     }
                 ]
 
-            # Run extraction with schema
-            if json_schema:
-                extracted_json = client.generate_completion(
-                    messages=extraction_messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_schema",
-                                     "json_schema": json_schema},
-                    subsection_name=f"{subsection_name} (JSON extraction)",
-                    conversation_id=conversation_id,
-                    **kwargs
-                )
+            # Handle dry run mode for extraction
+            if dry_run:
+                logger.info(f"\n=== DRY RUN - Extraction Payload ===")
+                logger.info(f"Model: {model or 'default'}")
+                logger.info(f"Temperature: {temperature}")
+                logger.info(f"Max tokens: {max_tokens}")
+                logger.info(f"Messages: {json.dumps(extraction_messages, indent=2)}")
+                logger.info(f"Schema: {json.dumps(json_schema, indent=2) if json_schema else 'None'}")
+                logger.info(f"Exclude from history: {exclude_from_history}")
+                logger.info(f"Exclude context: {exclude_context}")
+                logger.info(f"=== END DRY RUN ===")
+                
+                # Log to file if logger is available
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    client_params = {
+                        "messages": extraction_messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "subsection_name": f"{subsection_name} (extraction)",
+                        "conversation_id": conversation_id
+                    }
+                    
+                    if json_schema:
+                        client_params["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": json_schema
+                        }
+                        client_params["subsection_name"] = f"{subsection_name} (JSON extraction)"
+                    
+                    # Add model information
+                    request_data = {
+                        "model": model or 'default',
+                        **client_params
+                    }
+                    
+                    metadata = {
+                        "exclude_from_history": exclude_from_history,
+                        "exclude_context": exclude_context,
+                        "context_data_included": not exclude_context and bool(context_data),
+                        "has_schema": bool(json_schema),
+                        "step_type": "extraction"
+                    }
+                    
+                    self.dry_run_logger.log_request(
+                        pipeline_name=subsection_name,
+                        step_name="extraction",
+                        step_type="json_extraction",
+                        request_data=request_data,
+                        metadata=metadata
+                    )
+                
+                extracted_json = {"dry_run": True, "message": "This is a dry run extraction response"}
             else:
-                extracted_json = client.generate_completion(
-                    messages=extraction_messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    subsection_name=f"{subsection_name} (extraction)",
-                    conversation_id=conversation_id,
-                    **kwargs
-                )
+                # Prepare client parameters
+                client_params = {
+                    "messages": extraction_messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "subsection_name": f"{subsection_name} (extraction)",
+                    "conversation_id": conversation_id
+                }
+                
+                # Add any additional kwargs
+                client_params.update(kwargs)
+                
+                # Add model if specified
+                if model and hasattr(client, 'model_name'):
+                    original_model = client.model_name
+                    client.model_name = model
+                
+                # Run extraction with schema
+                if json_schema:
+                    client_params["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": json_schema
+                    }
+                    client_params["subsection_name"] = f"{subsection_name} (JSON extraction)"
+                
+                extracted_json = client.generate_completion(**client_params)
+                
+                # Restore original model
+                if model and hasattr(client, 'model_name'):
+                    client.model_name = original_model
 
             # Skip tonality matching if not provided
             if not tonality_messages:
@@ -312,15 +466,71 @@ class StandardPromptProcessor(BasePromptProcessor):
                 "content": f"Convert the following information to a standardized format: '''{json_str} ''' "
             })
 
-            # Process tonality using a different conversation ID to avoid mixing contexts
-            tonality_result = client.generate_completion(
-                messages=processed_tonality_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                subsection_name=f"{subsection_name} (tonality matching)",
-                conversation_id=f"{conversation_id}_tonality",
-                **kwargs
-            )
+            # Handle dry run mode for tonality
+            if dry_run:
+                logger.info(f"\n=== DRY RUN - Tonality Payload ===")
+                logger.info(f"Model: {model or 'default'}")
+                logger.info(f"Temperature: {temperature}")
+                logger.info(f"Max tokens: {max_tokens}")
+                logger.info(f"Messages: {json.dumps(processed_tonality_messages, indent=2)}")
+                logger.info(f"=== END DRY RUN ===")
+                
+                # Log to file if logger is available
+                if hasattr(self, 'dry_run_logger') and self.dry_run_logger:
+                    tonality_params = {
+                        "messages": processed_tonality_messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "subsection_name": f"{subsection_name} (tonality matching)",
+                        "conversation_id": f"{conversation_id}_tonality"
+                    }
+                    
+                    # Add model information
+                    request_data = {
+                        "model": model or 'default',
+                        **tonality_params
+                    }
+                    
+                    metadata = {
+                        "exclude_from_history": exclude_from_history,
+                        "exclude_context": exclude_context,
+                        "step_type": "tonality_matching",
+                        "extracted_json_length": len(str(extracted_json))
+                    }
+                    
+                    self.dry_run_logger.log_request(
+                        pipeline_name=subsection_name,
+                        step_name="tonality_matching",
+                        step_type="tonality_transformation",
+                        request_data=request_data,
+                        metadata=metadata
+                    )
+                
+                tonality_result = "This is a dry run tonality response"
+            else:
+                # Prepare client parameters for tonality
+                tonality_params = {
+                    "messages": processed_tonality_messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "subsection_name": f"{subsection_name} (tonality matching)",
+                    "conversation_id": f"{conversation_id}_tonality"
+                }
+                
+                # Add any additional kwargs
+                tonality_params.update(kwargs)
+                
+                # Add model if specified
+                if model and hasattr(client, 'model_name'):
+                    original_model = client.model_name
+                    client.model_name = model
+                
+                # Process tonality using a different conversation ID to avoid mixing contexts
+                tonality_result = client.generate_completion(**tonality_params)
+                
+                # Restore original model
+                if model and hasattr(client, 'model_name'):
+                    client.model_name = original_model
 
             return extracted_json, processed_tonality_messages, tonality_result
 
