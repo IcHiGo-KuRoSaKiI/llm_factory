@@ -6,7 +6,7 @@ long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="llm_factory",
-    version="0.1.2",
+    version="0.1.3",
     description="A flexible framework for LLM interaction",
     author="LLM Factory Team",
     long_description=long_description,
