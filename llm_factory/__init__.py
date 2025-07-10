@@ -55,6 +55,10 @@ from .parsers.docx.parser import DocxParser
 from .parsers.pptx.parser import PPTProcessor
 
 # Exposing specific processor implementations and base class
+from .processors.standard_processor import StandardPromptProcessor
+from .processors.cot_processor import ChainOfThoughtProcessor
+from .processors.routing_mixin import RoutingMixin
+
 # Import utility functions
 from llm_factory.utils import (
     encode_image_to_base64,
@@ -79,6 +83,7 @@ __all__ = [
     "BasePromptProcessor",  # Base Class for processors, for users to extend
     "StandardPromptProcessor",
     "ChainOfThoughtProcessor",
+    "RoutingMixin",
     "ParserFactory",
     "BaseParser",  # Base Class for parsers, for users to extend
     "PDFParser",

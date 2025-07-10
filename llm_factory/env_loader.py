@@ -68,10 +68,20 @@ def load_environment(env_path: Optional[str] = None) -> Dict[str, Any]:
         "api_request_timeout": int(os.getenv("API_REQUEST_TIMEOUT", "60")),
         "max_retries": int(os.getenv("MAX_RETRIES", "3")),
         "retry_delay": int(os.getenv("RETRY_DELAY", "1")),
-        
+
         # Default Pipeline Configuration
         "default_pipeline_type": os.getenv("DEFAULT_PIPELINE_TYPE", "standard"),
         "default_client_type": os.getenv("DEFAULT_CLIENT_TYPE", "openrouter"),
+
+        # Vision model configuration
+        "vision": {
+            "enabled": os.getenv("VISION_MODEL_ENABLED", "false").lower() == "true",
+            "client_type": os.getenv("VISION_CLIENT_TYPE", "lmstudio"),
+            "model_name": os.getenv("VISION_MODEL_NAME"),
+            "lmstudio_url": os.getenv("LM_STUDIO"),
+            "ollama_url": os.getenv("OLLAMA_HOST_URL"),
+            "ollama_model": os.getenv("OLLAMA_MODEL_NAME"),
+        },
     }
     
     # Check for missing required environment variables

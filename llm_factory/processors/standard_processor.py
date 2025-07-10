@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 from .base_processor import BasePromptProcessor
+from .routing_mixin import RoutingMixin
 try:
     from ..utils.dry_run_logger import create_dry_run_logger
 except ImportError:
@@ -19,14 +20,15 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class StandardPromptProcessor(BasePromptProcessor):
+class StandardPromptProcessor(RoutingMixin, BasePromptProcessor):
     """
     Processor for standard prompts with JSON extraction and optional tonality matching.
     Handles traditional extraction + tonality workflow.
     """
     
     def __init__(self):
-        """Initialize the Standard processor with dry-run logging capabilities"""
+        """Initialize the Standard processor with routing and dry-run support"""
+        super().__init__()
         self.dry_run_logger = None
 
     def process(self, client, prompt_config: Dict[str, Any], **kwargs) -> Dict[str, Any]:

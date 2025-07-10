@@ -5,6 +5,7 @@ import hashlib
 from typing import Any, Dict, List, Optional, Union
 
 from .base_processor import BasePromptProcessor
+from .routing_mixin import RoutingMixin
 try:
     from ..utils.dry_run_logger import create_dry_run_logger
 except ImportError:
@@ -20,7 +21,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class ChainOfThoughtProcessor(BasePromptProcessor):
+class ChainOfThoughtProcessor(RoutingMixin, BasePromptProcessor):
     """
     Enhanced Processor for Chain of Thought (CoT) pipelines with fine-tuning capabilities.
 
@@ -30,7 +31,8 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
     """
 
     def __init__(self):
-        """Initialize the Chain of Thought processor with fine-tuning capabilities"""
+        """Initialize the Chain of Thought processor with routing and fine-tuning."""
+        super().__init__()
         self.message_history = []  # For CoT pipeline
         self.raw_history = []      # For CoT pipeline
 
