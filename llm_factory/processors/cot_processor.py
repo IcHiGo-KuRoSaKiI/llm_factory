@@ -60,7 +60,17 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
 
             # NEW: Check for fine-tuning configuration
             self.fine_tune_prompt = prompt_config.get('fine_tune_prompt')
-            self.fine_tuning_enabled = bool(self.fine_tune_prompt)
+            
+            # Validate fine_tune_prompt if provided
+            if self.fine_tune_prompt is not None:
+                if not self.fine_tune_prompt.strip():
+                    logger.warning(
+                        "⚠️ Fine-tuning prompt is empty or contains only whitespace. "
+                        "Fine-tuning will be disabled."
+                    )
+                    self.fine_tune_prompt = None
+            
+            self.fine_tuning_enabled = bool(self.fine_tune_prompt and self.fine_tune_prompt.strip())
             
             # Initialize dry-run logger if needed (or if fine-tuning is enabled)
             if dry_run or self.fine_tuning_enabled:
@@ -686,6 +696,13 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                         "type": "json_schema", "json_schema": schema
                     }
                 
+                # Add fine-tuning context if enabled
+                if self.fine_tuning_enabled:
+                    client_params["fine_tune_context"] = {
+                        "enabled": True,
+                        "prompt": self.fine_tune_prompt
+                    }
+                
                 ai_response = client.generate_completion(**client_params)
                 
                 # Restore original model
@@ -839,6 +856,13 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 if schema:
                     client_params["response_format"] = {
                         "type": "json_schema", "json_schema": schema
+                    }
+                
+                # Add fine-tuning context if enabled
+                if self.fine_tuning_enabled:
+                    client_params["fine_tune_context"] = {
+                        "enabled": True,
+                        "prompt": self.fine_tune_prompt
                     }
                 
                 response = client.generate_completion(**client_params)
@@ -998,6 +1022,13 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 if model and hasattr(client, 'model_name'):
                     original_model = client.model_name
                     client.model_name = model
+                
+                # Add fine-tuning context if enabled
+                if self.fine_tuning_enabled:
+                    client_params["fine_tune_context"] = {
+                        "enabled": True,
+                        "prompt": self.fine_tune_prompt
+                    }
                 
                 # Generate response using the client
                 ai_response = client.generate_completion(**client_params)
@@ -1178,6 +1209,13 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
                 if schema:
                     client_params["response_format"] = {
                         "type": "json_schema", "json_schema": schema
+                    }
+                
+                # Add fine-tuning context if enabled
+                if self.fine_tuning_enabled:
+                    client_params["fine_tune_context"] = {
+                        "enabled": True,
+                        "prompt": self.fine_tune_prompt
                     }
                 
                 ai_response = client.generate_completion(**client_params)

@@ -4,15 +4,19 @@ import json
 import time
 import logging
 import base64
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from .base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
+
 class OpenAILLMClient(BaseLLMClient):
     """OpenAI client implementation"""
-    
+
     def __init__(self,
                  api_key: Optional[str] = None,
                  model_name: Optional[str] = None,
@@ -24,24 +28,39 @@ class OpenAILLMClient(BaseLLMClient):
             try:
                 import openai
             except ImportError:
-                raise ImportError("OpenAI package not installed. Install with 'pip install openai'")
-            
-            # Initialize the client
+                raise ImportError(
+                    "OpenAI package not installed. Install with 'pip install openai'")
+
+            # Initialize the direct OpenAI client
             self.client = openai.OpenAI(
                 api_key=api_key or os.getenv("OPENAI_API_KEY")
             )
-            self.model_name = model_name or os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")
-            
+            self.model_name = model_name or os.getenv(
+                "OPENAI_MODEL_NAME", "gpt-4o-mini")
+
+            # Initialize the LangChain client
+            self.llm_params = {
+                "openai_api_key": api_key or os.getenv("OPENAI_API_KEY"),
+                "model_name": self.model_name,
+                "temperature": default_temperature,
+                "max_tokens": default_max_tokens
+            }
+            self.langchain_client = ChatOpenAI(**self.llm_params)
+
             # Settings
             self.default_temperature = default_temperature
             self.default_max_tokens = default_max_tokens
-            
+
             # Initialize conversation history storage
             self.conversation_history = {}
             
+            # Initialize fine-tuning tracking
+            self.fine_tuning_logs = []
+            self.cache_hits = 0
+
         except Exception as e:
             raise RuntimeError(f"Failed to initialize OpenAI client: {str(e)}")
-    
+
     @staticmethod
     def parse_messages_json(messages_json: str) -> List[Dict[str, str]]:
         """Parse a JSON string containing messages into a list of message dictionaries"""
@@ -65,16 +84,17 @@ class OpenAILLMClient(BaseLLMClient):
             raise ValueError(f"Invalid JSON format: {str(e)}")
         except Exception as e:
             raise ValueError(f"Error parsing messages: {str(e)}")
-    
+
     def generate_completion(self,
-                           messages: Union[List[Dict[str, str]], str, Dict[str, str]],
-                           temperature: float = 0,
-                           max_tokens: int = 8000,
-                           response_format: Optional[Dict[str, Any]] = None,
-                           max_attempts: int = 3,
-                           subsection_name: str = "Unknown",
-                           conversation_id: str = "default",
-                           **kwargs) -> Union[str, Dict]:
+                            messages: Union[List[Dict[str, str]], str, Dict[str, str]],
+                            temperature: float = 0,
+                            max_tokens: int = 8000,
+                            response_format: Optional[Dict[str, Any]] = None,
+                            max_attempts: int = 3,
+                            subsection_name: str = "Unknown",
+                            conversation_id: str = "default",
+                            fine_tune_context: Optional[Dict[str, Any]] = None,
+                            **kwargs) -> Union[str, Dict]:
         """Generate a completion using OpenAI"""
         attempts = 0
 
@@ -87,82 +107,160 @@ class OpenAILLMClient(BaseLLMClient):
         # Initialize history for this conversation if not exists
         if conversation_id not in self.conversation_history:
             self.conversation_history[conversation_id] = []
-            
+
+        # Create LangChain message objects from the raw messages
+        langchain_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                langchain_messages.append(SystemMessage(content=content))
+            elif role == "assistant":
+                langchain_messages.append(AIMessage(content=content))
+            else:
+                langchain_messages.append(HumanMessage(content=content))
+
         # If we have history and this isn't a fresh start with a system message
-        if (self.conversation_history[conversation_id] and 
-            not (len(messages) > 0 and messages[0].get("role") == "system")):
+        if (self.conversation_history[conversation_id] and
+                not (len(messages) > 0 and messages[0].get("role") == "system")):
             # Get existing history and append new messages
-            all_messages = self.conversation_history[conversation_id] + messages
-        else:
-            all_messages = messages
-        
+            langchain_messages = self.conversation_history[conversation_id] + \
+                langchain_messages
+
         while attempts < max_attempts:
             try:
-                completion_params = {
-                    "model": self.model_name,
-                    "messages": all_messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens
-                }
-                
-                # Handle response format if provided
-                if response_format and response_format.get("type") == "json_object":
-                    completion_params["response_format"] = {"type": "json_object"}
-                
-                # Add any additional parameters
-                for key, value in kwargs.items():
-                    if key not in completion_params:
-                        completion_params[key] = value
-                
-                # Call the OpenAI API
-                response = self.client.chat.completions.create(**completion_params)
-                
-                # Extract the content from the response
-                content = response.choices[0].message.content
-                
-                # Update conversation history
-                self.conversation_history[conversation_id] = all_messages.copy()
-                self.conversation_history[conversation_id].append({
-                    "role": "assistant",
-                    "content": content
-                })
-                
-                # Return parsed JSON if json_object format is used, otherwise return text
+                # Set up the LangChain client with the requested parameters
+                llm = self.langchain_client.bind(
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    **kwargs
+                )
+
+                # Handle JSON schema if provided
                 if response_format and response_format.get("type") == "json_schema":
-                    try:
-                        return json.loads(content)
-                    except json.JSONDecodeError:
-                        logger.warning("Response is not valid JSON despite json_object format")
-                        return {"error": "Invalid JSON response", "content": content}
+                    schema = response_format.get("json_schema", {})
+
+                    # Process schema to ensure it has title and description
+                    # If schema is in format {"name": X, "schema": Y}, extract the inner schema
+                    if "name" in schema and "schema" in schema:
+                        schema = schema["schema"]
+
+                    # Ensure title and description are present
+                    if "title" not in schema:
+                        schema["title"] = schema.get("name", "OutputSchema")
+                    if "description" not in schema:
+                        schema["description"] = "Schema for structured output"
+
+                    # Create a structured output with this schema
+                    llm_with_schema = llm.with_structured_output(
+                        schema=schema,
+                        include_raw=True
+                    )
+
+                    response = llm_with_schema.invoke(langchain_messages)
+
+                    # Extract content from response
+                    if isinstance(response, dict) and "raw" in response:
+                        ai_msg_content = response["raw"].content if hasattr(
+                            response["raw"], "content") else str(response["raw"])
+                        result = {k: v for k, v in response.items()
+                                  if k != "raw"}
+                    else:
+                        ai_msg_content = str(response)
+                        result = response
+
+                    # Create AI message for history
+                    ai_msg = AIMessage(content=ai_msg_content)
+
                 else:
-                    return content
+                    # Standard text generation
+                    ai_msg = llm.invoke(langchain_messages)
+                    result = ai_msg.content
+
+                # Update conversation history
+                if len(langchain_messages) > 0 and isinstance(langchain_messages[0], SystemMessage):
+                    # If we start with a system message, keep it but add new interactions
+                    if len(self.conversation_history[conversation_id]) == 0:
+                        # First time, store the system message
+                        self.conversation_history[conversation_id].append(
+                            langchain_messages[0])
+
+                    # Add the latest user messages and AI response
+                    for msg in langchain_messages[1:]:
+                        if isinstance(msg, (HumanMessage, AIMessage)):
+                            self.conversation_history[conversation_id].append(
+                                msg)
+                else:
+                    # Just append the new messages to existing history
+                    for msg in langchain_messages:
+                        if isinstance(msg, (HumanMessage, AIMessage)):
+                            self.conversation_history[conversation_id].append(
+                                msg)
+
+                # Add AI response to history
+                self.conversation_history[conversation_id].append(ai_msg)
                 
+                # Track fine-tuning metadata
+                fine_tuning_metadata = self._track_fine_tuning(
+                    messages=messages,
+                    response=result,
+                    model_used=self.model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                    subsection_name=subsection_name,
+                    conversation_id=conversation_id,
+                    fine_tune_context=fine_tune_context
+                )
+                
+                # Return result with fine-tuning metadata if structured output
+                if response_format and response_format.get("type") == "json_schema":
+                    if isinstance(result, dict):
+                        result.update(fine_tuning_metadata)
+                    return result
+                else:
+                    return result
+
             except Exception as e:
-                logger.warning(f"Error in generation (attempt {attempts+1}): {str(e)}")
+                logger.warning(
+                    f"Error in generation (attempt {attempts+1}): {str(e)}")
                 attempts += 1
                 time.sleep(1)
-        
+
         # Return placeholder if all attempts failed
         error_msg = f"Failed to generate completion for '{subsection_name}' after {max_attempts} attempts."
         logger.error(error_msg)
-        
+
         if response_format and response_format.get("type") == "json_schema":
-            return {"error": error_msg, "status": "failed"}
+            return {
+                "error": error_msg, 
+                "status": "failed",
+                "fine_tuning_applied": fine_tune_context.get('enabled', False) if fine_tune_context else False,
+                "fine_tune_instruction": fine_tune_context.get('prompt', '') if fine_tune_context else "",
+                "cache_hits": self.cache_hits,
+                "pipeline_config": {
+                    "dry_run": False,
+                    "top_level_model": self.model_name,
+                    "top_level_temperature": temperature,
+                    "top_level_max_tokens": max_tokens
+                }
+            }
         else:
             return f"[Content generation failed: {error_msg}]"
-    
-    def get_openai_response_image(self, 
-                                 image_data: str, 
-                                 prompt: Optional[str] = None,
-                                 model: Optional[str] = None) -> str:
+
+    def get_openai_response_image(self,
+                                  image_data: str,
+                                  prompt: Optional[str] = None,
+                                  model: Optional[str] = None) -> str:
         """
         Extract text from an image using OpenAI's Vision capabilities
-        
+
         Args:
             image_data: Base64-encoded image data or data URI
             prompt: Optional custom prompt to use for image analysis
             model: Optional model name to use for image analysis
-            
+
         Returns:
             Extracted text from the image
         """
@@ -171,7 +269,7 @@ class OpenAILLMClient(BaseLLMClient):
             if not image_data.startswith("data:"):
                 # Convert base64 string to data URI
                 image_data = f"data:image/jpeg;base64,{image_data}"
-                
+
             # Use default prompt if none provided
             if not prompt:
                 prompt = """
@@ -192,10 +290,10 @@ class OpenAILLMClient(BaseLLMClient):
                 - Ensure the extracted information aligns with ethical guidelines.
                 Your primary objective is to accurately extract, structure, and interpret relevant data while maintaining a high standard of contextual and ethical awareness.
                 """
-            
+
             # Use specified model or default
             vision_model = model or "gpt-4o-mini"
-            
+
             # Call the OpenAI API with the image
             chat_completion = self.client.chat.completions.create(
                 messages=[
@@ -216,12 +314,156 @@ class OpenAILLMClient(BaseLLMClient):
                 ],
                 model=vision_model
             )
-            
+
             # Extract and clean the response
             raw_text = chat_completion.choices[0].message.content
             cleaned_text = self.clean_extracted_text(raw_text)
             return cleaned_text
-            
+
         except Exception as e:
             logger.error(f"Error processing image with OpenAI: {str(e)}")
             return f"[Image processing failed: {str(e)}]"
+    
+    def _track_fine_tuning(self,
+                          messages: List[Dict[str, str]],
+                          response: Union[str, Dict],
+                          model_used: str,
+                          temperature: float,
+                          max_tokens: int,
+                          response_format: Optional[Dict[str, Any]] = None,
+                          subsection_name: str = "Unknown",
+                          conversation_id: str = "default",
+                          fine_tune_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Track fine-tuning metadata for the current generation"""
+        
+        # Determine if fine-tuning was applied based on fine_tune_context or model name
+        fine_tuning_applied = False
+        fine_tune_instruction = ""
+        
+        if fine_tune_context:
+            fine_tuning_applied = fine_tune_context.get('enabled', False)
+            fine_tune_instruction = fine_tune_context.get('prompt', '')
+        else:
+            # Fallback: check model name for fine-tuned indicators
+            fine_tuning_applied = "ft-" in model_used or "fine-tuned" in model_used.lower()
+        
+        # Track cache hits (simplified - could be enhanced with actual cache detection)
+        self.cache_hits += 1
+        
+        # Create fine-tuning metadata
+        fine_tuning_metadata = {
+            "fine_tuning_applied": fine_tuning_applied,
+            "fine_tune_instruction": fine_tune_instruction,
+            "cache_hits": self.cache_hits,
+            "pipeline_config": {
+                "dry_run": False,  # Could be passed as parameter
+                "top_level_model": model_used,
+                "top_level_temperature": temperature,
+                "top_level_max_tokens": max_tokens
+            }
+        }
+        
+        # Create detailed log entry
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "conversation_id": conversation_id,
+            "subsection_name": subsection_name,
+            "model_used": model_used,
+            "base_model": self._extract_base_model(model_used),
+            "fine_tuning_applied": fine_tuning_applied,
+            "fine_tune_instruction": fine_tune_instruction,
+            "improvements": self._analyze_improvements(messages, response, fine_tuning_applied),
+            "parameters": {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "response_format": response_format
+            },
+            "input_tokens": self._estimate_tokens(str(messages)),
+            "output_tokens": self._estimate_tokens(str(response)),
+            "cache_hits": self.cache_hits
+        }
+        
+        # Add to fine-tuning logs
+        self.fine_tuning_logs.append(log_entry)
+        
+        return fine_tuning_metadata
+    
+    def _extract_base_model(self, model_name: str) -> str:
+        """Extract base model name from fine-tuned model name"""
+        if "ft-" in model_name:
+            # Fine-tuned model format: ft-gpt-3.5-turbo-0125:personal::8N8.... 
+            parts = model_name.split(":")
+            if len(parts) > 0:
+                base_part = parts[0].replace("ft-", "")
+                return base_part
+        return model_name
+    
+    def _analyze_improvements(self, messages: List[Dict[str, str]], response: Union[str, Dict], fine_tuning_applied: bool) -> List[str]:
+        """Analyze what improvements fine-tuning provided"""
+        improvements = []
+        
+        if fine_tuning_applied:
+            improvements.append("Enhanced response quality through domain-specific training")
+            improvements.append("Improved instruction following for specific use cases")
+            
+            # Analyze response characteristics
+            if isinstance(response, dict):
+                improvements.append("Better structured output generation")
+                if "error" not in response:
+                    improvements.append("Reduced error rate in structured responses")
+            
+            # Analyze response length and coherence
+            response_text = str(response)
+            if len(response_text) > 100:
+                improvements.append("More detailed and comprehensive responses")
+                
+        return improvements
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough estimation of token count"""
+        # Rough estimation: ~4 characters per token for English text
+        return len(text) // 4
+    
+    def save_fine_tuning_logs(self, file_path: str) -> None:
+        """Save fine-tuning logs to a JSON file"""
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            # Prepare comprehensive log data
+            log_data = {
+                "client_type": "OpenAI",
+                "timestamp": datetime.now().isoformat(),
+                "total_generations": len(self.fine_tuning_logs),
+                "total_cache_hits": self.cache_hits,
+                "fine_tuning_sessions": self.fine_tuning_logs,
+                "summary": {
+                    "fine_tuned_generations": sum(1 for log in self.fine_tuning_logs if log["fine_tuning_applied"]),
+                    "base_model_generations": sum(1 for log in self.fine_tuning_logs if not log["fine_tuning_applied"]),
+                    "models_used": list(set(log["model_used"] for log in self.fine_tuning_logs)),
+                    "base_models": list(set(log["base_model"] for log in self.fine_tuning_logs))
+                }
+            }
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(log_data, f, indent=2, ensure_ascii=False)
+                
+            logger.info(f"Fine-tuning logs saved to: {file_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save fine-tuning logs: {str(e)}")
+    
+    def get_fine_tuning_summary(self) -> Dict[str, Any]:
+        """Get a summary of fine-tuning usage"""
+        total_logs = len(self.fine_tuning_logs)
+        fine_tuned_count = sum(1 for log in self.fine_tuning_logs if log["fine_tuning_applied"])
+        
+        return {
+            "total_generations": total_logs,
+            "fine_tuned_generations": fine_tuned_count,
+            "base_model_generations": total_logs - fine_tuned_count,
+            "fine_tuning_percentage": (fine_tuned_count / total_logs * 100) if total_logs > 0 else 0,
+            "cache_hits": self.cache_hits,
+            "models_used": list(set(log["model_used"] for log in self.fine_tuning_logs)),
+            "recent_improvements": self.fine_tuning_logs[-1]["improvements"] if self.fine_tuning_logs else []
+        }

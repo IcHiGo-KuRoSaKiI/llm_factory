@@ -248,6 +248,13 @@ class DryRunLogger:
         Returns:
             Path to the created fine-tuning log file
         """
+        
+        # Validate fine_tuning_guidelines for better debugging
+        if not fine_tuning_guidelines or not fine_tuning_guidelines.strip():
+            logger.warning(
+                f"⚠️ Empty or whitespace-only fine_tuning_guidelines detected for step '{step_name}' "
+                f"in pipeline '{pipeline_name}'. This may indicate a configuration issue."
+            )
         timestamp = datetime.now().isoformat()
         
         fine_tuning_entry = {

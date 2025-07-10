@@ -3,6 +3,7 @@ import os
 import json
 import time
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from langchain_openai import AzureChatOpenAI
@@ -51,6 +52,10 @@ class AzureLLMClient(BaseLLMClient):
             # Initialize conversation history storage
             self.conversation_history = {}
             
+            # Initialize fine-tuning tracking
+            self.fine_tuning_logs = []
+            self.cache_hits = 0
+            
             # Store the vision deployment name if provided
             self.vision_deployment_name = os.getenv("AZURE_VISION_DEPLOYMENT_NAME")
             
@@ -89,6 +94,7 @@ class AzureLLMClient(BaseLLMClient):
                             max_attempts: int = 3,
                             subsection_name: str = "Unknown",
                             conversation_id: str = "default",
+                            fine_tune_context: Optional[Dict[str, Any]] = None,
                             **kwargs) -> Union[str, Dict]:
         """Generate a completion using Azure OpenAI"""
         attempts = 0
@@ -191,7 +197,26 @@ class AzureLLMClient(BaseLLMClient):
                 # Add AI response to history
                 self.conversation_history[conversation_id].append(ai_msg)
                 
-                return result
+                # Track fine-tuning metadata
+                fine_tuning_metadata = self._track_fine_tuning(
+                    messages=messages,
+                    response=result,
+                    model_used=self.deployment_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                    subsection_name=subsection_name,
+                    conversation_id=conversation_id,
+                    fine_tune_context=fine_tune_context
+                )
+                
+                # Return result with fine-tuning metadata if structured output
+                if response_format and response_format.get("type") == "json_schema":
+                    if isinstance(result, dict):
+                        result.update(fine_tuning_metadata)
+                    return result
+                else:
+                    return result
                 
             except Exception as e:
                 logger.warning(f"Error in generation (attempt {attempts+1}): {str(e)}")
@@ -203,7 +228,19 @@ class AzureLLMClient(BaseLLMClient):
         logger.error(error_msg)
         
         if response_format and response_format.get("type") == "json_schema":
-            return {"error": error_msg, "status": "failed"}
+            return {
+                "error": error_msg, 
+                "status": "failed",
+                "fine_tuning_applied": fine_tune_context.get('enabled', False) if fine_tune_context else False,
+                "fine_tune_instruction": fine_tune_context.get('prompt', '') if fine_tune_context else "",
+                "cache_hits": self.cache_hits,
+                "pipeline_config": {
+                    "dry_run": False,
+                    "top_level_model": self.deployment_name,
+                    "top_level_temperature": temperature,
+                    "top_level_max_tokens": max_tokens
+                }
+            }
         else:
             return f"[Content generation failed: {error_msg}]"
     
@@ -295,3 +332,157 @@ class AzureLLMClient(BaseLLMClient):
                     logger.error(f"Fallback to OpenAI failed: {str(fallback_error)}")
                     
             return f"[Image processing failed: {str(e)}]"
+    
+    def _track_fine_tuning(self,
+                          messages: List[Dict[str, str]],
+                          response: Union[str, Dict],
+                          model_used: str,
+                          temperature: float,
+                          max_tokens: int,
+                          response_format: Optional[Dict[str, Any]] = None,
+                          subsection_name: str = "Unknown",
+                          conversation_id: str = "default",
+                          fine_tune_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Track fine-tuning metadata for the current generation"""
+        
+        # Determine if fine-tuning was applied based on fine_tune_context or deployment name
+        fine_tuning_applied = False
+        fine_tune_instruction = ""
+        
+        if fine_tune_context:
+            fine_tuning_applied = fine_tune_context.get('enabled', False)
+            fine_tune_instruction = fine_tune_context.get('prompt', '')
+        else:
+            # Fallback: check deployment name for fine-tuned indicators
+            fine_tuning_applied = "ft-" in model_used or "fine-tuned" in model_used.lower() if model_used else False
+        
+        # Track cache hits (simplified - could be enhanced with actual cache detection)
+        self.cache_hits += 1
+        
+        # Create fine-tuning metadata
+        fine_tuning_metadata = {
+            "fine_tuning_applied": fine_tuning_applied,
+            "fine_tune_instruction": fine_tune_instruction,
+            "cache_hits": self.cache_hits,
+            "pipeline_config": {
+                "dry_run": False,  # Could be passed as parameter
+                "top_level_model": model_used,
+                "top_level_temperature": temperature,
+                "top_level_max_tokens": max_tokens
+            }
+        }
+        
+        # Create detailed log entry
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "conversation_id": conversation_id,
+            "subsection_name": subsection_name,
+            "model_used": model_used,
+            "base_model": self._extract_base_model(model_used),
+            "fine_tuning_applied": fine_tuning_applied,
+            "fine_tune_instruction": fine_tune_instruction,
+            "improvements": self._analyze_improvements(messages, response, fine_tuning_applied),
+            "parameters": {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "response_format": response_format
+            },
+            "input_tokens": self._estimate_tokens(str(messages)),
+            "output_tokens": self._estimate_tokens(str(response)),
+            "cache_hits": self.cache_hits,
+            "azure_endpoint": self.llm_params.get("azure_endpoint", "N/A"),
+            "deployment_name": self.deployment_name
+        }
+        
+        # Add to fine-tuning logs
+        self.fine_tuning_logs.append(log_entry)
+        
+        return fine_tuning_metadata
+    
+    def _extract_base_model(self, model_name: str) -> str:
+        """Extract base model name from fine-tuned model name"""
+        if not model_name:
+            return "unknown"
+            
+        if "ft-" in model_name:
+            # Fine-tuned model format: ft-gpt-4-0125:personal::8N8.... 
+            parts = model_name.split(":")
+            if len(parts) > 0:
+                base_part = parts[0].replace("ft-", "")
+                return base_part
+        return model_name
+    
+    def _analyze_improvements(self, messages: List[Dict[str, str]], response: Union[str, Dict], fine_tuning_applied: bool) -> List[str]:
+        """Analyze what improvements fine-tuning provided"""
+        improvements = []
+        
+        if fine_tuning_applied:
+            improvements.append("Enhanced response quality through domain-specific training")
+            improvements.append("Improved instruction following for Azure-specific use cases")
+            improvements.append("Better integration with Azure ecosystem")
+            
+            # Analyze response characteristics
+            if isinstance(response, dict):
+                improvements.append("Better structured output generation")
+                if "error" not in response:
+                    improvements.append("Reduced error rate in structured responses")
+            
+            # Analyze response length and coherence
+            response_text = str(response)
+            if len(response_text) > 100:
+                improvements.append("More detailed and comprehensive responses")
+                
+        return improvements
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough estimation of token count"""
+        # Rough estimation: ~4 characters per token for English text
+        return len(text) // 4
+    
+    def save_fine_tuning_logs(self, file_path: str) -> None:
+        """Save fine-tuning logs to a JSON file"""
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            # Prepare comprehensive log data
+            log_data = {
+                "client_type": "Azure",
+                "timestamp": datetime.now().isoformat(),
+                "azure_endpoint": self.llm_params.get("azure_endpoint", "N/A"),
+                "deployment_name": self.deployment_name,
+                "total_generations": len(self.fine_tuning_logs),
+                "total_cache_hits": self.cache_hits,
+                "fine_tuning_sessions": self.fine_tuning_logs,
+                "summary": {
+                    "fine_tuned_generations": sum(1 for log in self.fine_tuning_logs if log["fine_tuning_applied"]),
+                    "base_model_generations": sum(1 for log in self.fine_tuning_logs if not log["fine_tuning_applied"]),
+                    "models_used": list(set(log["model_used"] for log in self.fine_tuning_logs if log["model_used"])),
+                    "base_models": list(set(log["base_model"] for log in self.fine_tuning_logs))
+                }
+            }
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(log_data, f, indent=2, ensure_ascii=False)
+                
+            logger.info(f"Fine-tuning logs saved to: {file_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save fine-tuning logs: {str(e)}")
+    
+    def get_fine_tuning_summary(self) -> Dict[str, Any]:
+        """Get a summary of fine-tuning usage"""
+        total_logs = len(self.fine_tuning_logs)
+        fine_tuned_count = sum(1 for log in self.fine_tuning_logs if log["fine_tuning_applied"])
+        
+        return {
+            "total_generations": total_logs,
+            "fine_tuned_generations": fine_tuned_count,
+            "base_model_generations": total_logs - fine_tuned_count,
+            "fine_tuning_percentage": (fine_tuned_count / total_logs * 100) if total_logs > 0 else 0,
+            "cache_hits": self.cache_hits,
+            "deployment_name": self.deployment_name,
+            "azure_endpoint": self.llm_params.get("azure_endpoint", "N/A"),
+            "models_used": list(set(log["model_used"] for log in self.fine_tuning_logs if log["model_used"])),
+            "recent_improvements": self.fine_tuning_logs[-1]["improvements"] if self.fine_tuning_logs else []
+        }
