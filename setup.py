@@ -28,6 +28,7 @@ setup(
         "python-json-logger>=2.0.7",
         "requests>=2.31.0",
         "tqdm>=4.66.1",
+        "jsonschema>=4.21.1",
     ],
     include_package_data=True,
 )
