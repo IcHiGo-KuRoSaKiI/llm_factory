@@ -167,16 +167,21 @@ class ChainOfThoughtProcessor(BasePromptProcessor):
         """Initialize the prompt enhancer for fine-tuning"""
         try:
             from llm_factory.utils import PromptEnhancer
-            from llm_factory.env_loader import ENV_VARS
             
-            # Use the default client type from environment instead of hardcoded azure
-            default_client_type = ENV_VARS.get('default_client_type', 'azure')
-            
-            self.prompt_enhancer = PromptEnhancer(
-                client=client,
-                client_type=default_client_type,
-                dry_run=dry_run
-            )
+            # Let PromptEnhancer auto-detect client type when client is provided
+            # Only use default_client_type when no client is provided
+            if client:
+                self.prompt_enhancer = PromptEnhancer(
+                    client=client,
+                    dry_run=dry_run
+                )
+            else:
+                from llm_factory.env_loader import ENV_VARS
+                default_client_type = ENV_VARS.get('default_client_type', 'azure')
+                self.prompt_enhancer = PromptEnhancer(
+                    client_type=default_client_type,
+                    dry_run=dry_run
+                )
             logger.info("✅ Prompt enhancer initialized successfully")
         except Exception as e:
             logger.warning(

@@ -60,16 +60,16 @@ cot_config = {
 print("\n=== Example: Using LM Studio Model ===")
 
 lmstudio_config = {
-    "base_url": os.environ.get("LM_SUDIO" ),
+    "base_url": os.environ.get("LM_SUDIO"),
     "temperature": 0,
     "max_tokens": 8000
 }
 
 cot_result = run_pipeline(
     prompt_config=cot_config,
-    client_type="lmstudio",
+    client_type="openrouter",
     pipeline_type="multi_step",
-    **lmstudio_config
+    # **lmstudio_config
 )
 
 

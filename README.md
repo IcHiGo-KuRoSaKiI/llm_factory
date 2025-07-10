@@ -1,6 +1,6 @@
 # LLM Factory: Unified LLM & Document Parsing API
 
-LLM Factory is a modular Python framework for interacting with Large Language Models (LLMs) from multiple providers (Azure OpenAI, OpenAI, Groq, etc.) and for parsing documents (PDF, DOCX, PPTX) using a unified interface.
+LLM Factory is a modular Python framework for interacting with Large Language Models (LLMs) from multiple providers (Azure OpenAI, OpenAI, Groq, **OpenRouter**, LMStudio, Ollama) and for parsing documents (PDF, DOCX, PPTX) using a unified interface.
 
 ---
 
@@ -8,12 +8,15 @@ LLM Factory is a modular Python framework for interacting with Large Language Mo
 
 ```bash
 pip install -e git+https://github.com/shryesth/llm_factory.git#egg=llm_factory
+
+# For OpenRouter support (recommended), also install:
+pip install openai
 ```
 
 Or, for a specific version if published:
 
 ```bash
-pip install llm_factory
+pip install llm_factory openai
 ```
 
 ---
@@ -53,6 +56,7 @@ from llm_factory import (
     LMStudioClient,
     OllamaLLMClient,
     OpenAILLMClient,
+    OpenRouterLLMClient,
 
     # Concrete Parsers
     PDFParser,
@@ -327,7 +331,7 @@ result = run_pipeline(
         "name": "simple_prompt",
         "prompt": "What is the capital of France?"
     },
-    client_type="openai",      # or "azure", "groq", "lmstudio", "ollama"
+    client_type="openrouter",  # or "azure", "groq", "lmstudio", "ollama", "openai"
     pipeline_type="standard",  # or "cot" (chain-of-thought) / "multi_step"
     temperature=0.2,
     max_tokens=1000
@@ -336,7 +340,175 @@ print(result)
 # Expected: Paris (or similar)
 ```
 
-### 2. Using a Specific LLM Client (e.g., OpenAI)
+### 2. Using OpenRouter Client ⭐ **RECOMMENDED**
+
+**OpenRouter** provides access to **400+ AI models** through a unified API, offering automatic fallbacks, cost optimization, and the largest model selection available. LLM Factory uses the **OpenAI SDK** with OpenRouter's base URL for maximum compatibility and reliability.
+
+#### 🎯 **Why Choose OpenRouter?**
+- **Massive Model Selection**: Access GPT, Claude, Llama, Gemini, and 400+ other models
+- **Automatic Fallbacks**: If one model fails, OpenRouter automatically tries alternatives
+- **Cost Optimization**: Automatically routes to the most cost-effective available model
+- **No Vendor Lock-in**: Switch between models seamlessly without code changes
+- **Unified API**: One interface for all models using OpenAI SDK compatibility
+
+```python
+from llm_factory import OpenRouterLLMClient, run_pipeline
+
+# Ensure OPENROUTER_API_KEY is set in your environment or .env file
+try:
+    # Direct client usage with full parameter control (uses OpenAI SDK internally)
+    client = OpenRouterLLMClient(
+        model_name="qwen/qwen3-235b-a22b",  # High-quality model that works well
+        default_temperature=0.7,
+        default_max_tokens=1000,
+        default_top_p=0.9,
+        default_frequency_penalty=0.1,
+        default_presence_penalty=0.1
+    )
+    
+    # Generate completion with OpenRouter-specific parameters
+    response = client.generate_completion(
+        messages=[{"role": "user", "content": "Explain quantum computing in simple terms"}],
+        temperature=0.8,
+        max_tokens=500,
+        top_p=0.95,
+        frequency_penalty=0.2,
+        presence_penalty=0.1,
+        seed=42  # For reproducible results
+    )
+    print(f"OpenRouter Response: {response}")
+    
+    # Easy model switching - just change the model name!
+    premium_client = OpenRouterLLMClient(model_name="anthropic/claude-3.5-sonnet")
+    free_client = OpenRouterLLMClient(model_name="meta-llama/llama-3.2-3b-instruct:free")
+    
+    # Using through run_pipeline (OpenRouter is now the default!)
+    result = run_pipeline(
+        prompt_config={
+            "name": "quantum_explanation",
+            "prompt": "Explain quantum computing concepts",
+            "temperature": 0.6,
+            "max_tokens": 800
+        },
+        # No need to specify client_type - OpenRouter is default!
+        pipeline_type="standard"
+    )
+    print(f"Pipeline Result: {result}")
+    
+except Exception as e:
+    print(f"Error with OpenRouter: {e}")
+```
+
+#### 🔧 **OpenRouter Environment Variables**
+
+Set these in your `.env` file:
+
+```env
+# Required - Get your key at https://openrouter.ai/keys
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+
+# Optional - Model configuration (try different models!)
+OPENROUTER_MODEL_NAME=qwen/qwen3-235b-a22b               # Recommended: Fast & capable
+# OPENROUTER_MODEL_NAME=anthropic/claude-3.5-sonnet      # Premium option
+# OPENROUTER_MODEL_NAME=meta-llama/llama-3.2-3b-instruct:free  # Free option
+
+OPENROUTER_VISION_MODEL=openai/gpt-4o-mini
+
+# Optional - Site information (for OpenRouter analytics)
+OPENROUTER_SITE_URL=https://github.com/yourusername/yourproject
+OPENROUTER_SITE_NAME=Your Project Name
+
+# Set OpenRouter as default client (recommended!)
+DEFAULT_CLIENT_TYPE=openrouter
+```
+
+#### ⚙️ **Supported OpenRouter Parameters**
+
+OpenRouter supports all standard OpenAI parameters plus additional model-specific options:
+
+- **temperature** (0.0-2.0): Controls randomness in responses
+- **top_p** (0.0-1.0): Nucleus sampling for response diversity
+- **frequency_penalty** (-2.0-2.0): Reduces repetition based on frequency
+- **presence_penalty** (-2.0-2.0): Reduces repetition based on presence  
+- **seed** (integer): For deterministic, reproducible outputs
+- **logit_bias** (dict): Fine-tune token selection probabilities
+- **response_format**: For structured JSON outputs
+
+#### 🚀 **Easy Model Switching**
+
+One of OpenRouter's biggest advantages is effortless model switching:
+
+```python
+# Switch models by just changing the environment variable or parameter
+models_to_try = [
+    "qwen/qwen3-235b-a22b",                    # Fast, capable, reliable
+    "anthropic/claude-3.5-sonnet",             # Premium reasoning
+    "openai/gpt-4o",                           # Latest GPT
+    "google/gemini-pro-1.5",                   # Long context
+    "meta-llama/llama-3.2-90b-instruct",       # Open source power
+    "meta-llama/llama-3.2-3b-instruct:free"    # Free option
+]
+
+for model in models_to_try:
+    try:
+        result = run_pipeline(
+            prompt_config={"prompt": "What's 2+2?"},
+            # Pass model directly in config to override default
+            client_type="openrouter"
+        )
+        print(f"{model}: {result}")
+        break  # Use first working model
+    except:
+        continue  # Try next model if current one fails
+```
+
+#### 🔄 **Chain-of-Thought (CoT) Pipelines with OpenRouter**
+
+OpenRouter works seamlessly with LLM Factory's advanced CoT pipelines:
+
+```python
+from llm_factory import run_cot_pipeline
+
+# Complex reasoning pipeline using OpenRouter
+cot_config = {
+    "name": "problem_solver",
+    "model": "qwen/qwen3-235b-a22b",  # High-reasoning model
+    "temperature": 0.7,
+    "context_data": "Complex problem context here...",
+    "steps": [
+        {
+            "type": "initialPrompt", 
+            "name": "analyze_problem",
+            "prompt": "Break down this problem step by step",
+            "output_key": "analysis"
+        },
+        {
+            "type": "finalAnswer",
+            "name": "solve",
+            "prompt": "Provide the final solution based on analysis",
+            "input_key": "analysis"
+        }
+    ]
+}
+
+# Run with OpenRouter (automatic fallbacks if model fails)
+result = run_cot_pipeline(
+    pipeline_config=cot_config,
+    client_type="openrouter",  # Can be omitted since it's now default
+    temperature=0.7
+)
+```
+
+#### 📝 **Clean Logging**
+
+OpenRouter client now has clean, minimal logging - only essential information is shown by default. Detailed request/response logging is available in debug mode:
+
+```python
+import logging
+logging.getLogger('llm_factory.clients.openrouter_client').setLevel(logging.DEBUG)
+```
+
+### 3. Using a Specific LLM Client (e.g., OpenAI)
 
 ```python
 from llm_factory import OpenAILLMClient, LLMClientFactory
@@ -554,7 +726,8 @@ llm_factory/                     # Root of the llm_factory project
 │   │   ├── groq_client.py
 │   │   ├── lmstudio_client.py
 │   │   ├── ollama_client.py
-│   │   └── openai_client.py
+│   │   ├── openai_client.py
+│   │   └── openrouter_client.py
 │   ├── parsers/                 # Document parsing implementations
 │   │   ├── __init__.py
 │   │   ├── base_parser.py       # Abstract base class for parsers

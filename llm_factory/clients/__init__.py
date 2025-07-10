@@ -4,6 +4,7 @@ from .groq_client import GroqLLMClient
 from .lmstudio_client import LMStudioClient
 from .ollama_client import OllamaLLMClient
 from .openai_client import OpenAILLMClient
+from .openrouter_client import OpenRouterLLMClient
 
 __all__ = [
     "BaseLLMClient",
@@ -11,5 +12,6 @@ __all__ = [
     "GroqLLMClient",
     "LMStudioClient",
     "OllamaLLMClient",
-    "OpenAILLMClient"
+    "OpenAILLMClient",
+    "OpenRouterLLMClient"
 ]

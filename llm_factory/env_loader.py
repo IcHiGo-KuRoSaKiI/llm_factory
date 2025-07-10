@@ -51,6 +51,15 @@ def load_environment(env_path: Optional[str] = None) -> Dict[str, Any]:
             "model_name": os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
         },
         
+        # OpenRouter Configuration
+        "openrouter": {
+            "api_key": os.getenv("OPENROUTER_API_KEY"),
+            "model_name": os.getenv("OPENROUTER_MODEL_NAME", "qwen/qwen3-235b-a22b"),
+            "site_url": os.getenv("OPENROUTER_SITE_URL", "https://github.com/IcHiGo-KuRoSaKiI/llm_factory"),
+            "site_name": os.getenv("OPENROUTER_SITE_NAME", "LLM Factory"),
+            "vision_model": os.getenv("OPENROUTER_VISION_MODEL", "openai/gpt-4o-mini"),
+        },
+        
         # General LLM Settings
         "default_temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0")),
         "default_max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "8000")),
@@ -62,12 +71,12 @@ def load_environment(env_path: Optional[str] = None) -> Dict[str, Any]:
         
         # Default Pipeline Configuration
         "default_pipeline_type": os.getenv("DEFAULT_PIPELINE_TYPE", "standard"),
-        "default_client_type": os.getenv("DEFAULT_CLIENT_TYPE", "azure"),
+        "default_client_type": os.getenv("DEFAULT_CLIENT_TYPE", "openrouter"),
     }
     
     # Check for missing required environment variables
     required_vars = []
-    client_type = os.getenv("DEFAULT_CLIENT_TYPE", "azure").lower()
+    client_type = os.getenv("DEFAULT_CLIENT_TYPE", "openrouter").lower()
     
     if client_type == "azure":
         required_vars = ["AZURE_BASE_ENDPOINT", "AZURE_API_KEY", "AZURE_API_VERSION"]
@@ -75,6 +84,8 @@ def load_environment(env_path: Optional[str] = None) -> Dict[str, Any]:
         required_vars = ["GROQ_API_KEY"]
     elif client_type == "openai":
         required_vars = ["OPENAI_API_KEY"]
+    elif client_type == "openrouter":
+        required_vars = ["OPENROUTER_API_KEY"]
     
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
@@ -88,7 +99,7 @@ def get_client_config(client_type: str, env_vars: Dict[str, Any]) -> Dict[str, A
     Get configuration for a specific client type
     
     Args:
-        client_type: The client type (azure, groq, openai)
+        client_type: The client type (azure, groq, openai, openrouter)
         env_vars: Dictionary with environment variables
         
     Returns:
@@ -102,6 +113,8 @@ def get_client_config(client_type: str, env_vars: Dict[str, Any]) -> Dict[str, A
         return env_vars["groq"]
     elif client_type == "openai":
         return env_vars["openai"]
+    elif client_type == "openrouter":
+        return env_vars["openrouter"]
     else:
         raise ValueError(f"Unsupported client type: {client_type}")
 

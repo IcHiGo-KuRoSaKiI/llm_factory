@@ -1,6 +1,6 @@
 
 
-## The structured output that i cannot confirm, works or not
+# The structured output that i cannot confirm, works or not
 import json
 import logging
 import os
@@ -19,12 +19,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class Coordinates(BaseModel):
     x: int
     y: int
 
+
 class OutputWrapper(BaseModel):
     output: Coordinates
+
 
 # Convert Pydantic schema to JSON schema
 pydantic_schema = OutputWrapper.model_json_schema()
@@ -96,12 +99,10 @@ cot_result = run_pipeline(
     prompt_config=cot_config,
     client_type="lmstudio",
     pipeline_type="multi_step",
-    **lmstudio_config
+    # **lmstudio_config
 )
 
 print("CoT Result:", json.dumps(cot_result, indent=2))
-
-
 
 
 # Make the result more accessible
@@ -109,16 +110,16 @@ def extract_final_output(result):
     """Extract the final output from a chain of thought pipeline result"""
     if not result:
         return None
-        
+
     # If it's a dictionary with a single key (pipeline name)
     if isinstance(result, dict) and len(result) == 1:
         pipeline_result = next(iter(result.values()))
         if isinstance(pipeline_result, dict) and "final_output" in pipeline_result:
             return pipeline_result["final_output"]
-    
+
     return result  # Return original if structure doesn't match expectations
+
 
 # Get the final output directly
 final_output = extract_final_output(cot_result)
 print("\nFinal Output:", final_output)
-

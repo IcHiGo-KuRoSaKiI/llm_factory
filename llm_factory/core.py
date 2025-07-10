@@ -80,6 +80,9 @@ class LLMClientFactory:
         elif client_type.lower() in ["ollama"]:
             from llm_factory.clients.ollama_client import OllamaLLMClient
             return OllamaLLMClient(**kwargs)
+        elif client_type.lower() == "openrouter":
+            from llm_factory.clients.openrouter_client import OpenRouterLLMClient
+            return OpenRouterLLMClient(**kwargs)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 
@@ -103,7 +106,7 @@ class PromptProcessorFactory:
 def run_pipeline(
     prompt_config: Optional[Dict[str, Any]] = None,
     input_path_or_text: Optional[str] = None,
-    client_type: str = "azure",
+    client_type: str = "openrouter",
     pipeline_type: str = "standard",
     output_path: Optional[str] = None,
     temperature: float = 0,
@@ -116,7 +119,7 @@ def run_pipeline(
     Args:
         prompt_config: The prompt configuration dictionary
         input_path_or_text: Path to input file or raw text input
-        client_type: Type of LLM client to use (azure, groq, openai, lmstudio)
+        client_type: Type of LLM client to use (azure, groq, openai, lmstudio, openrouter)
         pipeline_type: Type of prompt pipeline to use (standard, cot/multi_step)
         output_path: Path to save the output (optional)
         temperature: Temperature parameter for the LLM

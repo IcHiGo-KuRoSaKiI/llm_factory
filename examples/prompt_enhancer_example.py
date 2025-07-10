@@ -113,7 +113,7 @@ def example_document_analysis():
     print("\n=== Example 2: Document Analysis Prompt Enhancement ===")
 
     # Create a PromptEnhancer instance (alternative approach)
-    enhancer = PromptEnhancer(client_type="azure")
+    enhancer = PromptEnhancer(client_type="openrouter")
 
     # Enhance the prompt
     result = enhancer.enhance_prompt(
@@ -169,7 +169,7 @@ def example_code_enhancement():
         context_data=context_data,
         enhancement_type="code",
         temperature=0.4,
-        client_type="azure"
+        client_type="openrouter"
     )
 
     # Display results

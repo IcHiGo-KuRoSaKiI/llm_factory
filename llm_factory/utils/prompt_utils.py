@@ -27,26 +27,29 @@ class PromptEnhancer:
             **client_kwargs: Additional kwargs to pass to the client creation
         """
         self.client = client
-        self.client_type = client_type or ENV_VARS.get('default_client_type', 'azure')
         self.client_kwargs = client_kwargs
         self.dry_run = dry_run
 
         # Create client if not provided
         if self.client is None:
+            # Use provided client_type or fallback to environment default
+            self.client_type = client_type or ENV_VARS.get('default_client_type', 'azure')
             try:
                 self.client = LLMClientFactory.create_client(
-                    client_type=client_type,
+                    client_type=self.client_type,
                     **client_kwargs
                 )
                 logger.info(
-                    f"Created {client_type} client for prompt enhancement")
+                    f"Created {self.client_type} client for prompt enhancement")
             except Exception as e:
                 logger.error(f"Failed to create client: {str(e)}")
                 raise RuntimeError(f"Failed to create LLM client: {str(e)}")
-
-        # Try to detect client type if not provided
-        if not hasattr(self, 'client_type') or not self.client_type:
-            self.client_type = self._detect_client_type()
+        else:
+            # Client is provided, detect its type or use provided client_type
+            if client_type:
+                self.client_type = client_type
+            else:
+                self.client_type = self._detect_client_type()
 
         logger.info(f"Using client type: {self.client_type}")
 
@@ -58,6 +61,8 @@ class PromptEnhancer:
             return "azure"
         elif "openai" in client_class:
             return "openai"
+        elif "openrouter" in client_class:
+            return "openrouter"
         elif "lmstudio" in client_class:
             return "lmstudio"
         elif "groq" in client_class:
@@ -84,6 +89,16 @@ class PromptEnhancer:
                 "name": "enhanced_prompt_schema",
                 "schema": schema
             }
+        elif client_type == "openrouter":
+            # OpenRouter requires explicit response format instructions
+            if "title" not in schema:
+                schema["title"] = "EnhancedPromptResponse"
+            if "description" not in schema:
+                schema["description"] = "Response schema for enhanced prompt"
+            # Add strict formatting requirements
+            schema["additionalProperties"] = False
+            schema["required"] = ["enhanced_prompt"]
+            return schema
         else:
             # Default to the original schema
             return schema
@@ -211,8 +226,45 @@ class PromptEnhancer:
 
                 # Now check for enhanced_prompt in the response
                 if "enhanced_prompt" not in response:
-                    raise ValueError(
-                        f"Response missing enhanced_prompt: {response}")
+                    # Try to extract content from common response formats
+                    if "choices" in response and len(response["choices"]) > 0:
+                        content = response["choices"][0].get("message", {}).get("content", "")
+                        try:
+                            parsed_content = json.loads(content)
+                            if "enhanced_prompt" in parsed_content:
+                                response = parsed_content
+                            else:
+                                raise ValueError(f"Parsed content missing enhanced_prompt: {parsed_content}")
+                        except json.JSONDecodeError:
+                            raise ValueError(f"Unable to parse JSON content: {content}")
+                    else:
+                        # Check if it's an error response from client
+                        if "error" in response and "content" in response:
+                            # Try to extract JSON from content field
+                            try:
+                                import re
+                                content = response["content"]
+                                # Try to extract JSON from markdown code blocks
+                                json_match = re.search(r'```json\s*\n(.*?)\n```', content, re.DOTALL)
+                                if json_match:
+                                    parsed_content = json.loads(json_match.group(1))
+                                    if "enhanced_prompt" in parsed_content:
+                                        response = parsed_content
+                                        logger.info("Successfully extracted enhanced_prompt from error response content")
+                                        return response
+                                
+                                # Try to extract JSON from any code blocks
+                                json_match = re.search(r'```\s*\n(.*?)\n```', content, re.DOTALL)
+                                if json_match:
+                                    parsed_content = json.loads(json_match.group(1))
+                                    if "enhanced_prompt" in parsed_content:
+                                        response = parsed_content
+                                        logger.info("Successfully extracted enhanced_prompt from error response content")
+                                        return response
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+                        
+                        raise ValueError(f"Response missing enhanced_prompt: {response}")
 
                 logger.info("Successfully enhanced prompt")
                 return response
@@ -282,6 +334,21 @@ class PromptEnhancer:
                 "3. How the enhanced prompt better addresses the context and new guidelines"
             )
 
+        # Add client-specific response format instructions
+        client_type = getattr(self, 'client_type', 'unknown').lower()
+        format_instructions = "Your response must be in valid JSON format matching the requested schema."
+        
+        if client_type == "openrouter":
+            format_instructions = (
+                "CRITICAL: Your response must be ONLY a valid JSON object with these exact fields:\n"
+                "{\n"
+                '  "enhanced_prompt": "your enhanced prompt text here",\n'
+                '  "explanation": "explanation of changes made",\n'
+                '  "reasoning": "reasoning behind the enhancements"\n'
+                "}\n\n"
+                "Do NOT return any other data structure or format. Do NOT return the original content."
+            )
+
         return f"""
 {base_instructions}
 
@@ -299,7 +366,7 @@ GUIDELINES FOR PROMPT ENHANCEMENT:
 
 {explanation_instructions}
 
-Your response must be in valid JSON format matching the requested schema.
+{format_instructions}
 """
 
     def _format_user_message(
