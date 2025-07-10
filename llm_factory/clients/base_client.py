@@ -10,6 +10,14 @@ class BaseLLMClient(ABC):
                             messages: Union[List[Dict[str, str]], str, Dict[str, str]],
                             temperature: float = 0,
                             max_tokens: int = 8000,
+                            top_p: Optional[float] = None,
+                            top_k: Optional[int] = None,
+                            frequency_penalty: Optional[float] = None,
+                            presence_penalty: Optional[float] = None,
+                            repetition_penalty: Optional[float] = None,
+                            min_p: Optional[float] = None,
+                            top_a: Optional[float] = None,
+                            seed: Optional[int] = None,
                             **kwargs) -> Union[str, Dict]:
         """Generate a completion using the LLM"""
         pass

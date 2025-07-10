@@ -21,7 +21,15 @@ class OpenAILLMClient(BaseLLMClient):
                  api_key: Optional[str] = None,
                  model_name: Optional[str] = None,
                  default_temperature: float = 0,
-                 default_max_tokens: int = 8000):
+                 default_max_tokens: int = 8000,
+                 default_top_p: float = 1.0,
+                 default_top_k: int = 0,
+                 default_frequency_penalty: float = 0.0,
+                 default_presence_penalty: float = 0.0,
+                 default_repetition_penalty: float = 1.0,
+                 default_min_p: float = 0.0,
+                 default_top_a: float = 0.0,
+                 default_seed: Optional[int] = None):
         """Initialize OpenAI client"""
         try:
             # Import OpenAI client
@@ -50,6 +58,14 @@ class OpenAILLMClient(BaseLLMClient):
             # Settings
             self.default_temperature = default_temperature
             self.default_max_tokens = default_max_tokens
+            self.default_top_p = default_top_p or float(os.getenv("OPENAI_TOP_P", "1.0"))
+            self.default_top_k = default_top_k or int(os.getenv("OPENAI_TOP_K", "0"))
+            self.default_frequency_penalty = default_frequency_penalty or float(os.getenv("OPENAI_FREQUENCY_PENALTY", "0.0"))
+            self.default_presence_penalty = default_presence_penalty or float(os.getenv("OPENAI_PRESENCE_PENALTY", "0.0"))
+            self.default_repetition_penalty = default_repetition_penalty or float(os.getenv("OPENAI_REPETITION_PENALTY", "1.0"))
+            self.default_min_p = default_min_p or float(os.getenv("OPENAI_MIN_P", "0.0"))
+            self.default_top_a = default_top_a or float(os.getenv("OPENAI_TOP_A", "0.0"))
+            self.default_seed = default_seed or (int(os.getenv("OPENAI_SEED")) if os.getenv("OPENAI_SEED") else None)
 
             # Initialize conversation history storage
             self.conversation_history = {}
@@ -89,6 +105,14 @@ class OpenAILLMClient(BaseLLMClient):
                             messages: Union[List[Dict[str, str]], str, Dict[str, str]],
                             temperature: float = 0,
                             max_tokens: int = 8000,
+                            top_p: Optional[float] = None,
+                            top_k: Optional[int] = None,
+                            frequency_penalty: Optional[float] = None,
+                            presence_penalty: Optional[float] = None,
+                            repetition_penalty: Optional[float] = None,
+                            min_p: Optional[float] = None,
+                            top_a: Optional[float] = None,
+                            seed: Optional[int] = None,
                             response_format: Optional[Dict[str, Any]] = None,
                             max_attempts: int = 3,
                             subsection_name: str = "Unknown",
@@ -130,12 +154,38 @@ class OpenAILLMClient(BaseLLMClient):
 
         while attempts < max_attempts:
             try:
+                # Prepare parameters with defaults
+                effective_params = {
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
+                
+                # Add optional parameters with defaults
+                if top_p is not None:
+                    effective_params["top_p"] = top_p
+                elif self.default_top_p != 1.0:
+                    effective_params["top_p"] = self.default_top_p
+                    
+                if frequency_penalty is not None:
+                    effective_params["frequency_penalty"] = frequency_penalty
+                elif self.default_frequency_penalty != 0.0:
+                    effective_params["frequency_penalty"] = self.default_frequency_penalty
+                    
+                if presence_penalty is not None:
+                    effective_params["presence_penalty"] = presence_penalty
+                elif self.default_presence_penalty != 0.0:
+                    effective_params["presence_penalty"] = self.default_presence_penalty
+                    
+                if seed is not None:
+                    effective_params["seed"] = seed
+                elif self.default_seed is not None:
+                    effective_params["seed"] = self.default_seed
+                
+                # Add any additional kwargs
+                effective_params.update(kwargs)
+                
                 # Set up the LangChain client with the requested parameters
-                llm = self.langchain_client.bind(
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs
-                )
+                llm = self.langchain_client.bind(**effective_params)
 
                 # Handle JSON schema if provided
                 if response_format and response_format.get("type") == "json_schema":
