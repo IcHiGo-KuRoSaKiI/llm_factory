@@ -6,6 +6,10 @@ import logging
 import base64
 from typing import Any, Dict, List, Optional, Union
 
+from jsonschema import validate, ValidationError
+
+from llm_factory.utils import components_relationships_schema
+
 from .base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,53 @@ class OpenAILLMClient(BaseLLMClient):
             
         except Exception as e:
             raise RuntimeError(f"Failed to initialize OpenAI client: {str(e)}")
+
+    @staticmethod
+    def extract_json_from_response(content: str) -> dict:
+        """Extract and parse JSON from API responses."""
+        import re
+
+        if not content or not isinstance(content, str):
+            raise ValueError("Content must be a non-empty string")
+
+        content_stripped = content.strip()
+        if content_stripped.startswith('{') and content_stripped.endswith('}'):
+            try:
+                return json.loads(content_stripped)
+            except json.JSONDecodeError:
+                pass
+
+        json_pattern = r'```(?:json)?\s*\n?({.*?})\s*\n?```'
+        match = re.search(json_pattern, content, re.DOTALL | re.IGNORECASE)
+        if match:
+            json_str = match.group(1).strip()
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+        json_object_pattern = r'({[^{}]*(?:{[^{}]*}[^{}]*)*})'
+        matches = re.findall(json_object_pattern, content, re.DOTALL)
+        for candidate in matches:
+            try:
+                return json.loads(candidate.strip())
+            except json.JSONDecodeError:
+                continue
+
+        first_brace = content.find('{')
+        last_brace = content.rfind('}')
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            potential_json = content[first_brace:last_brace + 1]
+            try:
+                return json.loads(potential_json)
+            except json.JSONDecodeError:
+                pass
+
+        cleaned_content = re.sub(r'```(?:json)?\s*\n?', '', content.strip(), flags=re.IGNORECASE)
+        cleaned_content = re.sub(r'\n?```\s*$', '', cleaned_content)
+        cleaned_content = re.sub(r'\n\s*', ' ', cleaned_content)
+        cleaned_content = re.sub(r'\s+', ' ', cleaned_content)
+        return json.loads(cleaned_content)
     
     @staticmethod
     def parse_messages_json(messages_json: str) -> List[Dict[str, str]]:
@@ -106,8 +157,17 @@ class OpenAILLMClient(BaseLLMClient):
                 }
                 
                 # Handle response format if provided
-                if response_format and response_format.get("type") == "json_object":
-                    completion_params["response_format"] = {"type": "json_object"}
+                if response_format:
+                    if response_format.get("type") == "json_object":
+                        completion_params["response_format"] = {"type": "json_object"}
+                    elif response_format.get("type") == "json_schema":
+                        schema = (response_format.get("schema") or
+                                  response_format.get("json_schema") or
+                                  components_relationships_schema)
+                        completion_params["response_format"] = {
+                            "type": "json_schema",
+                            "schema": schema
+                        }
                 
                 # Add any additional parameters
                 for key, value in kwargs.items():
@@ -127,13 +187,23 @@ class OpenAILLMClient(BaseLLMClient):
                     "content": content
                 })
                 
-                # Return parsed JSON if json_object format is used, otherwise return text
-                if response_format and response_format.get("type") == "json_schema":
+                # Process JSON output when requested
+                if response_format and response_format.get("type") in ["json_schema", "json_object"]:
                     try:
-                        return json.loads(content)
-                    except json.JSONDecodeError:
-                        logger.warning("Response is not valid JSON despite json_object format")
-                        return {"error": "Invalid JSON response", "content": content}
+                        parsed_result = self.extract_json_from_response(content)
+                        if response_format.get("type") == "json_schema":
+                            schema = (response_format.get("schema") or
+                                      response_format.get("json_schema") or
+                                      components_relationships_schema)
+                            try:
+                                validate(instance=parsed_result, schema=schema)
+                            except ValidationError as ve:
+                                logger.warning(f"Schema validation failed: {ve.message}")
+                        return parsed_result
+                    except (json.JSONDecodeError, ValueError) as e:
+                        logger.warning(f"Could not parse JSON response: {str(e)}")
+                        logger.debug(f"Raw content that failed to parse: {content}")
+                        return {"error": "Invalid JSON response", "content": content, "parse_error": str(e)}
                 else:
                     return content
                 
@@ -146,7 +216,7 @@ class OpenAILLMClient(BaseLLMClient):
         error_msg = f"Failed to generate completion for '{subsection_name}' after {max_attempts} attempts."
         logger.error(error_msg)
         
-        if response_format and response_format.get("type") == "json_schema":
+        if response_format and response_format.get("type") in ["json_schema", "json_object"]:
             return {"error": error_msg, "status": "failed"}
         else:
             return f"[Content generation failed: {error_msg}]"
